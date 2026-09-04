@@ -31,14 +31,21 @@ def render_crud_form(resource: str, fields: Sequence[str], list_endpoint: str) -
 </html>"""
 
 
-def render_crud_component_js(resource: str, api_base: str, fields: Sequence[str]) -> str:
+def render_crud_component_js(
+    resource: str, api_base: str, fields: Sequence[str], *, list_fields: Sequence[str] = ()
+) -> str:
     """Render vanilla-JS custom elements <{resource}-list>/<{resource}-form> for JSON CRUD.
 
     Both elements talk to the same JSON endpoints the API already serves at
     `api_base` (list/create/get/update/delete) -- no separate web-component-only
     backend, just a browser-native front end for the existing CRUD interface.
+    `list_fields` names which of `fields` hold an array value: the list view joins
+    it with ", " for display instead of relying on default array-to-string
+    coercion, and the form splits its raw input on "," into an array before
+    submitting.
     """
     fields_json = ", ".join(f'"{field}"' for field in fields)
+    list_fields_json = ", ".join(f'"{field}"' for field in list_fields)
     return f"""class {resource.capitalize()}List extends HTMLElement {{
   connectedCallback() {{
     this.apiBase = this.getAttribute("api-base") || "{api_base}";
@@ -49,9 +56,11 @@ def render_crud_component_js(resource: str, api_base: str, fields: Sequence[str]
     const response = await fetch(this.apiBase);
     const records = await response.json();
     const fields = [{fields_json}];
+    const listFields = [{list_fields_json}];
+    const display = (record, f) => listFields.includes(f) ? record[f].join(", ") : record[f];
     this.innerHTML = "<table><tr>" + fields.map(f => `<th>${{f}}</th>`).join("") +
       "<th></th></tr>" + records.map(record => "<tr>" +
-        fields.map(f => `<td>${{record[f]}}</td>`).join("") +
+        fields.map(f => `<td>${{display(record, f)}}</td>`).join("") +
         `<td><button data-id="${{record.id}}">Delete</button></td></tr>`).join("") +
       "</table>";
     this.querySelectorAll("button[data-id]").forEach(button => {{
@@ -67,12 +76,16 @@ class {resource.capitalize()}Form extends HTMLElement {{
   connectedCallback() {{
     this.apiBase = this.getAttribute("api-base") || "{api_base}";
     const fields = [{fields_json}];
+    const listFields = [{list_fields_json}];
     this.innerHTML = "<form>" + fields.map(f =>
       `<label>${{f}}: <input name="${{f}}" required></label>`).join("<br>") +
       '<br><button type="submit">Create</button></form>';
     this.querySelector("form").addEventListener("submit", async (event) => {{
       event.preventDefault();
       const data = Object.fromEntries(new FormData(event.target));
+      listFields.forEach(f => {{
+        data[f] = data[f].split(",").map(v => v.trim()).filter(v => v);
+      }});
       await fetch(this.apiBase, {{
         method: "POST",
         headers: {{ "Content-Type": "application/json" }},
