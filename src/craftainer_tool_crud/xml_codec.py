@@ -13,7 +13,7 @@ from xml.etree.ElementTree import Element, SubElement, fromstring, tostring
 from pydantic import BaseModel
 
 
-def _is_list_annotation(annotation: object) -> bool:
+def is_list_annotation(annotation: object) -> bool:
     """Return whether a Pydantic field annotation is a list, seeing through the
     Annotated/`| None` wrappers HeroUpdate-style optional fields add around it.
     """
@@ -21,11 +21,9 @@ def _is_list_annotation(annotation: object) -> bool:
     if origin is list:
         return True
     if origin is Annotated:
-        return _is_list_annotation(get_args(annotation)[0])
+        return is_list_annotation(get_args(annotation)[0])
     if origin is Union:
-        return any(
-            _is_list_annotation(arg) for arg in get_args(annotation) if arg is not type(None)
-        )
+        return any(is_list_annotation(arg) for arg in get_args(annotation) if arg is not type(None))
     return False
 
 
@@ -53,6 +51,6 @@ def from_xml[ModelT: BaseModel](body: bytes, schema: type[ModelT]) -> ModelT:
     data: dict[str, str | list[str | None] | None] = {}
     for tag, values in grouped.items():
         field = schema.model_fields.get(tag)
-        is_list_field = field is not None and _is_list_annotation(field.annotation)
+        is_list_field = field is not None and is_list_annotation(field.annotation)
         data[tag] = values if is_list_field else values[-1]
     return schema.model_validate(data)
