@@ -2,14 +2,17 @@
 
 Works with any BaseModel whose fields are scalars or flat lists of scalars (no
 nested models) -- Hero fits that shape (see app.controllers.heroes_xml for the
-applied example). Uses stdlib xml.etree.ElementTree rather than a third-party XML
-library: a flat model needs nothing more than one element per field (repeated for a
-list field, one element per item).
+applied example). Renders with stdlib xml.etree.ElementTree (a flat model needs
+nothing more than one element per field, repeated for a list field, one element
+per item) but parses with defusedxml -- the request body is untrusted input, and
+stdlib ElementTree.fromstring is vulnerable to entity-expansion ("billion laughs")
+DoS attacks.
 """
 
 from typing import Annotated, Union, get_args, get_origin
-from xml.etree.ElementTree import Element, SubElement, fromstring, tostring
+from xml.etree.ElementTree import Element, SubElement, tostring
 
+from defusedxml.ElementTree import fromstring
 from pydantic import BaseModel
 
 
@@ -44,7 +47,7 @@ def from_xml[ModelT: BaseModel](body: bytes, schema: type[ModelT]) -> ModelT:
     """Parse an XML document (repeated elements group into a list field, single
     elements stay scalar) into the given model.
     """
-    root = fromstring(body)  # noqa: S314 -- request body, not untrusted external XML with entities
+    root = fromstring(body)
     grouped: dict[str, list[str | None]] = {}
     for child in root:
         grouped.setdefault(child.tag, []).append(child.text)

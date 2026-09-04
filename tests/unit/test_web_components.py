@@ -25,3 +25,32 @@ def test_render_crud_component_js_with_list_fields_splits_and_joins() -> None:
     js = render_crud_component_js("hero", "/heroes", ["name", "powers"], list_fields=["powers"])
     assert 'data[f] = data[f].split(",").map(v => v.trim()).filter(v => v);' in js
     assert 'listFields.includes(f) ? record[f].join(", ") : record[f]' in js
+
+
+def test_render_crud_component_js_escapes_field_values_before_interpolation() -> None:
+    """List.refresh() runs every displayed field value through escapeHtml, not raw innerHTML."""
+    js = render_crud_component_js("hero", "/heroes", ["name"])
+    assert "escapeHtml(display(record, f))" in js
+    assert "escapeHtml(record.id)" in js
+
+    escape_html_js = """function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}"""
+    assert escape_html_js in js
+    assert escape_html("<img src=x onerror=alert(1)>") == "&lt;img src=x onerror=alert(1)&gt;"
+
+
+def escape_html(value: str) -> str:
+    """Reimplement the generated JS's escapeHtml in Python, to assert its escaping behavior."""
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )

@@ -46,7 +46,16 @@ def render_crud_component_js(
     """
     fields_json = ", ".join(f'"{field}"' for field in fields)
     list_fields_json = ", ".join(f'"{field}"' for field in list_fields)
-    return f"""class {resource.capitalize()}List extends HTMLElement {{
+    return f"""function escapeHtml(value) {{
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}}
+
+class {resource.capitalize()}List extends HTMLElement {{
   connectedCallback() {{
     this.apiBase = this.getAttribute("api-base") || "{api_base}";
     this.refresh();
@@ -58,10 +67,10 @@ def render_crud_component_js(
     const fields = [{fields_json}];
     const listFields = [{list_fields_json}];
     const display = (record, f) => listFields.includes(f) ? record[f].join(", ") : record[f];
-    this.innerHTML = "<table><tr>" + fields.map(f => `<th>${{f}}</th>`).join("") +
+    this.innerHTML = "<table><tr>" + fields.map(f => `<th>${{escapeHtml(f)}}</th>`).join("") +
       "<th></th></tr>" + records.map(record => "<tr>" +
-        fields.map(f => `<td>${{display(record, f)}}</td>`).join("") +
-        `<td><button data-id="${{record.id}}">Delete</button></td></tr>`).join("") +
+        fields.map(f => `<td>${{escapeHtml(display(record, f))}}</td>`).join("") +
+        `<td><button data-id="${{escapeHtml(record.id)}}">Delete</button></td></tr>`).join("") +
       "</table>";
     this.querySelectorAll("button[data-id]").forEach(button => {{
       button.addEventListener("click", async () => {{
