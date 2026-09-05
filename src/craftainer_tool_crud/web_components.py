@@ -1,7 +1,7 @@
 """Generic HTML form + web-component JS templates for any CRUD resource.
 
 Both functions are parameterized by resource name/field list/API base path, not
-tied to Hero -- see app.controllers.heroes_web for the applied example. Plain
+tied to Hero -- see app.resources.heroes.heroes_v2 for the applied example. Plain
 string templates rather than a template engine (e.g. Jinja2): these pages are
 small enough that a template engine would add a dependency without adding
 clarity.
@@ -24,7 +24,7 @@ def render_crud_form(
     docs/adrs/0009-...md) -- the two are no longer the same path.
 
     `resource`/`fields`/`list_endpoint`/`own_base` are always hardcoded values
-    from a router factory call (see app.controllers.heroes), never derived
+    from a router factory call (see app.resources.heroes), never derived
     from unsanitized request data -- html.escape here is defense-in-depth
     against a future resource that builds one of them from configuration,
     matching the escapeHtml() pattern render_crud_component_js already applies
