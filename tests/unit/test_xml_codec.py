@@ -57,6 +57,11 @@ def test_to_xml_stringifies_non_string_fields() -> None:
         name="Batman",
         powers=["Detective skills"],
         owner_id="alice",
+        is_draft=False,
+        archived_at=None,
+        publish_at=None,
+        unpublish_at=None,
+        is_locked=False,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         updated_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
