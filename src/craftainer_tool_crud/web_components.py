@@ -11,17 +11,28 @@ import html
 from collections.abc import Sequence
 
 
-def render_crud_form(resource: str, fields: Sequence[str], list_endpoint: str) -> str:
+def render_crud_form(
+    resource: str, fields: Sequence[str], list_endpoint: str, own_base: str
+) -> str:
     """Render a zero-JS HTML page: a plain <form> that POSTs a new record, plus a table.
 
-    `resource`/`fields`/`list_endpoint` are always hardcoded values from a router
-    factory call (see app.controllers.heroes_web), never derived from a request --
-    html.escape here is defense-in-depth against a future resource that builds one of
-    them from configuration, matching the escapeHtml() pattern render_crud_component_js
-    already applies to record data rendered client-side.
+    `list_endpoint` (the sibling JSON API's base path) is only for the rendered
+    `<{resource}-list>` web component's data calls -- the native `<form>`'s own
+    `action` and the `<script src>` loading `render_crud_component_js`'s output
+    must instead target `own_base`, this route's own mount path, since
+    `build_resource_router` mounts JSON and web under different sub-prefixes (see
+    docs/adrs/0009-...md) -- the two are no longer the same path.
+
+    `resource`/`fields`/`list_endpoint`/`own_base` are always hardcoded values
+    from a router factory call (see app.controllers.heroes), never derived
+    from unsanitized request data -- html.escape here is defense-in-depth
+    against a future resource that builds one of them from configuration,
+    matching the escapeHtml() pattern render_crud_component_js already applies
+    to record data rendered client-side.
     """
     escaped_resource = html.escape(resource)
-    escaped_endpoint = html.escape(list_endpoint)
+    escaped_list_endpoint = html.escape(list_endpoint)
+    escaped_own_base = html.escape(own_base)
     inputs = "\n".join(
         f"      <label>{html.escape(field)}: "
         f'<input name="{html.escape(field)}" required></label><br>'
@@ -32,13 +43,13 @@ def render_crud_form(resource: str, fields: Sequence[str], list_endpoint: str) -
 <head><meta charset="utf-8"><title>{escaped_resource} — form</title></head>
 <body>
   <h1>{escaped_resource}</h1>
-  <form method="post" action="{escaped_endpoint}/form">
+  <form method="post" action="{escaped_own_base}/form">
 {inputs}
     <button type="submit">Create</button>
   </form>
   <hr>
-  <script src="{escaped_endpoint}/components.js"></script>
-  <{escaped_resource}-list api-base="{escaped_endpoint}"></{escaped_resource}-list>
+  <script src="{escaped_own_base}/components.js"></script>
+  <{escaped_resource}-list api-base="{escaped_list_endpoint}"></{escaped_resource}-list>
 </body>
 </html>"""
 

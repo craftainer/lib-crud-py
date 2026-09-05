@@ -5,16 +5,18 @@ from app.web_components import render_crud_component_js, render_crud_form
 
 def test_render_crud_form_includes_an_input_per_field() -> None:
     """render_crud_form renders one <input> per field, plus the components script tag."""
-    html = render_crud_form("hero", ["name", "powers"], "/heroes")
+    html = render_crud_form(
+        "hero", ["name", "powers"], "/crud/v1/heroes/v2/json", "/crud/v1/heroes/v2/web"
+    )
     assert '<input name="name" required>' in html
     assert '<input name="powers" required>' in html
-    assert '<script src="/heroes/components.js">' in html
+    assert '<script src="/crud/v1/heroes/v2/web/components.js">' in html
     assert "<hero-list" in html
 
 
 def test_render_crud_form_escapes_resource_and_field_names() -> None:
-    """resource/fields/list_endpoint are HTML-escaped, defense-in-depth per the module docstring."""
-    html = render_crud_form('hero"<script>', ['na"me<'], "/heroes?x=1&y=2")
+    """resource/fields/endpoints are HTML-escaped, defense-in-depth per the module docstring."""
+    html = render_crud_form('hero"<script>', ['na"me<'], "/heroes?x=1&y=2", "/heroes")
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
     assert "&quot;" in html

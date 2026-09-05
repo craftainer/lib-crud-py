@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 def is_list_annotation(annotation: object) -> bool:
     """Return whether a Pydantic field annotation is a list, seeing through the
-    Annotated/`| None` wrappers HeroUpdate-style optional fields add around it.
+    Annotated/`| None` wrappers HeroV2Update-style optional fields add around it.
     """
     origin = get_origin(annotation)
     if origin is list:
