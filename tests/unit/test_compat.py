@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.crud.base import CRUDInterface
 from app.crud.compat import CompatCRUD
+from app.repositories.filtering import FilterClause, FilterOp
 from tests.unit.crud.test_base import _FakeWidgetRepository, _Widget, _WidgetCreate, _WidgetUpdate
 
 
@@ -107,3 +108,42 @@ async def test_delete(compat_crud: CompatCRUD[_LegacyWidget, _Widget, object]) -
     created = await compat_crud.create(_LegacyWidgetCreate(tag="a"))
     assert await compat_crud.delete(created.id) is True
     assert await compat_crud.delete(created.id) is False
+
+
+async def test_count_matches_filters(
+    compat_crud: CompatCRUD[_LegacyWidget, _Widget, object],
+) -> None:
+    """count() reports how many records match the given filters, in the current field name."""
+    await compat_crud.create(_LegacyWidgetCreate(tag="a"))
+    await compat_crud.create(_LegacyWidgetCreate(tag="b"))
+    assert await compat_crud.count() == 2
+    assert await compat_crud.count(filters=[FilterClause("label", FilterOp.EQ, "a")]) == 1
+
+
+async def test_update_many_converts_up_then_back_down(
+    compat_crud: CompatCRUD[_LegacyWidget, _Widget, object],
+) -> None:
+    """update_many() converts the legacy payload up, applies it, and returns the legacy shape."""
+    await compat_crud.create(_LegacyWidgetCreate(tag="apple"))
+    await compat_crud.create(_LegacyWidgetCreate(tag="apricot"))
+    await compat_crud.create(_LegacyWidgetCreate(tag="banana"))
+    updated = await compat_crud.update_many(
+        filters=[FilterClause("label", FilterOp.ICONTAINS, "ap")],
+        data=_LegacyWidgetUpdate(tag="updated"),
+    )
+    assert {widget.tag for widget in updated} == {"updated"}
+    assert len(updated) == 2
+
+
+async def test_delete_many_removes_every_match(
+    compat_crud: CompatCRUD[_LegacyWidget, _Widget, object],
+) -> None:
+    """delete_many() removes every record matching the filters and returns them in legacy shape."""
+    await compat_crud.create(_LegacyWidgetCreate(tag="apple"))
+    await compat_crud.create(_LegacyWidgetCreate(tag="apricot"))
+    await compat_crud.create(_LegacyWidgetCreate(tag="banana"))
+    deleted = await compat_crud.delete_many(
+        filters=[FilterClause("label", FilterOp.ICONTAINS, "ap")]
+    )
+    assert len(deleted) == 2
+    assert await compat_crud.count() == 1

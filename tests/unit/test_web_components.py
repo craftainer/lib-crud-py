@@ -20,6 +20,28 @@ def test_render_crud_component_js_defines_custom_elements() -> None:
     assert "/heroes" in js
 
 
+def test_render_crud_component_js_fetches_filters_metadata_on_connect() -> None:
+    """The list element fetches `${apiBase}/filters` once, on connectedCallback."""
+    js = render_crud_component_js("hero", "/heroes", ["name", "powers"])
+    assert "await fetch(`${this.apiBase}/filters`)" in js
+    assert "connectedCallback" in js
+
+
+def test_render_crud_component_js_bulk_actions_use_id_in_filter() -> None:
+    """Bulk delete/update target exactly the checked rows via an `id__in=` filter."""
+    js = render_crud_component_js("hero", "/heroes", ["name"])
+    assert '`${this.apiBase}?id__in=${ids.join(",")}`' in js
+    assert 'method: "DELETE"' in js
+    assert "bulk-delete" in js
+    assert "bulk-edit" in js
+
+
+def test_render_crud_component_js_single_delete_uses_id_query_param() -> None:
+    """A row's own delete button targets `?id=`, not a path segment."""
+    js = render_crud_component_js("hero", "/heroes", ["name"])
+    assert "`${this.apiBase}?id=${button.dataset.id}`" in js
+
+
 def test_render_crud_component_js_with_list_fields_splits_and_joins() -> None:
     """A list_fields entry gets split on "," in the form handler and joined for display."""
     js = render_crud_component_js("hero", "/heroes", ["name", "powers"], list_fields=["powers"])
