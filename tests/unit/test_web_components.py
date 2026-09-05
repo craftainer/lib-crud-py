@@ -12,6 +12,15 @@ def test_render_crud_form_includes_an_input_per_field() -> None:
     assert "<hero-list" in html
 
 
+def test_render_crud_form_escapes_resource_and_field_names() -> None:
+    """resource/fields/list_endpoint are HTML-escaped, defense-in-depth per the module docstring."""
+    html = render_crud_form('hero"<script>', ['na"me<'], "/heroes?x=1&y=2")
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+    assert "&quot;" in html
+    assert "&amp;" in html
+
+
 def test_render_crud_component_js_defines_custom_elements() -> None:
     """render_crud_component_js registers <resource-list> and <resource-form>."""
     js = render_crud_component_js("hero", "/heroes", ["name", "powers"])

@@ -7,26 +7,38 @@ small enough that a template engine would add a dependency without adding
 clarity.
 """
 
+import html
 from collections.abc import Sequence
 
 
 def render_crud_form(resource: str, fields: Sequence[str], list_endpoint: str) -> str:
-    """Render a zero-JS HTML page: a plain <form> that POSTs a new record, plus a table."""
+    """Render a zero-JS HTML page: a plain <form> that POSTs a new record, plus a table.
+
+    `resource`/`fields`/`list_endpoint` are always hardcoded values from a router
+    factory call (see app.controllers.heroes_web), never derived from a request --
+    html.escape here is defense-in-depth against a future resource that builds one of
+    them from configuration, matching the escapeHtml() pattern render_crud_component_js
+    already applies to record data rendered client-side.
+    """
+    escaped_resource = html.escape(resource)
+    escaped_endpoint = html.escape(list_endpoint)
     inputs = "\n".join(
-        f'      <label>{field}: <input name="{field}" required></label><br>' for field in fields
+        f"      <label>{html.escape(field)}: "
+        f'<input name="{html.escape(field)}" required></label><br>'
+        for field in fields
     )
     return f"""<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>{resource} — form</title></head>
+<head><meta charset="utf-8"><title>{escaped_resource} — form</title></head>
 <body>
-  <h1>{resource}</h1>
-  <form method="post" action="{list_endpoint}/form">
+  <h1>{escaped_resource}</h1>
+  <form method="post" action="{escaped_endpoint}/form">
 {inputs}
     <button type="submit">Create</button>
   </form>
   <hr>
-  <script src="{list_endpoint}/components.js"></script>
-  <{resource}-list api-base="{list_endpoint}"></{resource}-list>
+  <script src="{escaped_endpoint}/components.js"></script>
+  <{escaped_resource}-list api-base="{escaped_endpoint}"></{escaped_resource}-list>
 </body>
 </html>"""
 
