@@ -56,7 +56,7 @@ def test_render_crud_component_js_single_delete_uses_id_query_param() -> None:
 def test_render_crud_component_js_with_list_fields_splits_and_joins() -> None:
     """A list_fields entry gets split on "," in the form handler and joined for display."""
     js = render_crud_component_js("hero", "/heroes", ["name", "powers"], list_fields=["powers"])
-    assert 'data[f] = data[f].split(",").map(v => v.trim()).filter(v => v);' in js
+    assert 'data[f] = (data[f] || "").split(",").map(v => v.trim()).filter(v => v);' in js
     assert 'listFields.includes(f) ? record[f].join(", ") : record[f]' in js
 
 
@@ -87,3 +87,68 @@ def escape_html(value: str) -> str:
         .replace('"', "&quot;")
         .replace("'", "&#39;")
     )
+
+
+# --- Opt-in capability flags: archivable/draftable/has_revisions/has_events/stats ---
+
+
+def test_render_crud_component_js_defaults_every_capability_flag_off() -> None:
+    """With no opt-in flags passed, every generated capability constant is false.
+
+    The row-action markup itself (restore-row/publish-row/history-row) is still
+    present in the generated JS text either way -- it's gated by a runtime `if
+    (this.archivable && ...)` check, not omitted from the template -- so this
+    only asserts the *constants* the runtime checks are false.
+    """
+    js = render_crud_component_js("hero", "/heroes", ["name"])
+    assert "this.archivable = false;" in js
+    assert "this.draftable = false;" in js
+    assert "this.hasRevisions = false;" in js
+    assert "this.hasEvents = false;" in js
+    assert "this.statsEnabled = false;" in js
+
+
+def test_render_crud_component_js_archivable_adds_restore_action() -> None:
+    """archivable=True renders an "include archived" toggle and a Restore row action."""
+    js = render_crud_component_js("hero", "/heroes", ["name"], archivable=True)
+    assert "this.archivable = true;" in js
+    assert "include-archived" in js
+    assert "restore-row" in js
+    assert "/restore?" in js
+
+
+def test_render_crud_component_js_draftable_adds_publish_action_and_draft_button() -> None:
+    """draftable=True renders a Publish row action and a Save-as-draft form button."""
+    js = render_crud_component_js("hero", "/heroes", ["name"], draftable=True)
+    assert "this.draftable = true;" in js
+    assert "publish-row" in js
+    assert "/publish?" in js
+    assert "Save as draft" in js
+    assert "/draft`" in js
+
+
+def test_render_crud_component_js_has_revisions_adds_history_panel() -> None:
+    """has_revisions=True renders a History row action fetching GET .../revisions?id=."""
+    js = render_crud_component_js("hero", "/heroes", ["name"], has_revisions=True)
+    assert "this.hasRevisions = true;" in js
+    assert "history-row" in js
+    assert "/revisions?" in js
+
+
+def test_render_crud_component_js_has_events_subscribes_to_event_source() -> None:
+    """has_events=True subscribes to GET .../events via the browser EventSource API."""
+    js = render_crud_component_js("hero", "/heroes", ["name"], has_events=True)
+    assert "this.hasEvents = true;" in js
+    assert "new EventSource(`${this.apiBase}/events`)" in js
+
+
+def test_render_crud_component_js_stats_enabled_adds_stats_and_predict_panel() -> None:
+    """stats_enabled=True renders a Stats table and a Predict control fetching /stats and
+    /predict, plus an inline SVG bar chart helper -- no charting dependency.
+    """
+    js = render_crud_component_js("hero", "/heroes", ["name"], stats_enabled=True)
+    assert "this.statsEnabled = true;" in js
+    assert "renderStatsPanel" in js
+    assert "${this.apiBase}/stats`" in js
+    assert "${this.apiBase}/predict?" in js
+    assert "<svg" in js
