@@ -197,16 +197,16 @@ class {resource.capitalize()}List extends HTMLElement {{
     }});
     this.resultsEl.querySelectorAll("button[data-id]").forEach(button => {{
       button.addEventListener("click", async () => {{
-        await fetch(`${{this.apiBase}}?id=${{button.dataset.id}}`, {{ method: "DELETE" }});
+        const params = new URLSearchParams({{ id: button.dataset.id }});
+        await fetch(`${{this.apiBase}}?${{params}}`, {{ method: "DELETE" }});
         this.refresh();
       }});
     }});
     this.resultsEl.querySelector(".bulk-delete").addEventListener("click", async () => {{
       const ids = this.selectedIds();
       if (!ids.length) return;
-      const response = await fetch(
-        `${{this.apiBase}}?id__in=${{ids.join(",")}}`, {{ method: "DELETE" }}
-      );
+      const params = new URLSearchParams({{ id__in: ids.join(",") }});
+      const response = await fetch(`${{this.apiBase}}?${{params}}`, {{ method: "DELETE" }});
       const result = await response.json();
       this.resultsEl.querySelector(".bulk-result").textContent =
         `Deleted ${{result.matched}} record(s).`;
@@ -221,7 +221,8 @@ class {resource.capitalize()}List extends HTMLElement {{
           ? el.value.split(",").map(v => v.trim()).filter(v => v)
           : el.value;
       }});
-      const response = await fetch(`${{this.apiBase}}?id__in=${{ids.join(",")}}`, {{
+      const params = new URLSearchParams({{ id__in: ids.join(",") }});
+      const response = await fetch(`${{this.apiBase}}?${{params}}`, {{
         method: "PATCH",
         headers: {{ "Content-Type": "application/json" }},
         body: JSON.stringify(data),
