@@ -200,7 +200,6 @@ class {resource.capitalize()}List extends HTMLElement {{
     if (this.archivable) {{
       this.filtersEl.querySelector(".include-archived").addEventListener("change", (event) => {{
         this.includeArchived = event.target.checked;
-        this.refresh();
       }});
     }}
   }}
