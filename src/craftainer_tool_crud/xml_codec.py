@@ -32,10 +32,17 @@ def is_list_annotation(annotation: object) -> bool:
 
 def to_xml(model: BaseModel, root_tag: str) -> str:
     """Render a flat Pydantic model as XML: one child element per scalar field, one
-    repeated child element per item of a list field.
+    repeated child element per item of a list field. A `None`-valued field is
+    omitted entirely (not rendered as the literal text "None") -- from_xml already
+    treats a missing tag as "unset" (falling back to the field's own default), so
+    this keeps a None field's XML round-trip through to_xml+from_xml lossless, the
+    same way an unset field never appears in `model_dump(mode="json")`'s JSON
+    sibling response either.
     """
     root = Element(root_tag)
     for field, value in model.model_dump(mode="json").items():
+        if value is None:
+            continue
         items = value if isinstance(value, list) else [value]
         for item in items:
             child = SubElement(root, field)
