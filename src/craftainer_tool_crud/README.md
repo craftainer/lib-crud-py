@@ -65,5 +65,6 @@ to its left, never anything to its right.
 - Add resource-specific code anywhere in this package — a resource's
   own model/view/router belongs in `app/` instead, built on top of the
   generic pieces here.
-- Import from `app.models`, `app.views`, `app.crud_1`, `app.health`, or
-  any other resource-specific `app/` module — see "Layering" above.
+- Import from `app.models`, `app.views`, `app.crud_1`,
+  `app.health_checks`, or any other resource-specific `app/` module —
+  see "Layering" above.
