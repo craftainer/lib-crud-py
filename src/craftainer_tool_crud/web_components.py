@@ -87,7 +87,7 @@ def render_crud_component_js(
     bulk action can never reach a record the visible list doesn't show.
 
     `archivable`/`draftable`/`has_revisions`/`has_events`/`stats_enabled` mirror
-    the same-named opt-in params `app.controllers.crud_router.build_json_router`
+    the same-named opt-in params `crud.controllers.crud_router.build_json_router`
     was given for this resource -- each gates one piece of generated UI (an
     Archive/Restore row action, a Save-as-draft/Publish pair, a per-row History
     panel fetching `GET .../revisions?id=`, a live `EventSource` subscription to
