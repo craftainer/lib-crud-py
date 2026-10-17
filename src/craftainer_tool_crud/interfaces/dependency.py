@@ -7,17 +7,17 @@ from collections.abc import Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from crud.interfaces.base import (
+from craftainer_tool_crud.interfaces.base import (
     EventSink,
     EventSource,
     InMemoryEventSink,
     MQTTEventSink,
     MQTTEventSource,
 )
-from crud.models.base import IdentifiedBase
-from crud.repositories.base import Repository
-from crud.repositories.memory import InMemoryRepository
-from crud.repositories.sqlalchemy import SQLAlchemyRepository
+from craftainer_tool_crud.models.base import IdentifiedBase
+from craftainer_tool_crud.repositories.base import Repository
+from craftainer_tool_crud.repositories.memory import InMemoryRepository
+from craftainer_tool_crud.repositories.sqlalchemy import SQLAlchemyRepository
 
 settings = get_settings()
 

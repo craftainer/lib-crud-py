@@ -10,8 +10,8 @@ need a real Postgres session).
 import pytest
 
 from app.models.hero import Hero
-from crud.repositories.filtering import FilterClause, FilterOp, SortClause
-from crud.repositories.sqlalchemy import SQLAlchemyRepository
+from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
+from craftainer_tool_crud.repositories.sqlalchemy import SQLAlchemyRepository
 
 
 def test_where_clauses_rejects_unknown_filter_field() -> None:

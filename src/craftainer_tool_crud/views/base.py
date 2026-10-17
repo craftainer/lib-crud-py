@@ -9,7 +9,8 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, PlainSerializer
 class ORMView(BaseModel):
     """Base for API-facing Pydantic models constructible from an ORM model instance.
 
-    `from_attributes=True` is what lets crud.interfaces.base.CRUDInterface build one of these
+    `from_attributes=True` is what lets craftainer_tool_crud.interfaces.base.CRUDInterface build
+    one of these
     straight from a SQLAlchemy model instance via `model_validate`, instead of a dict.
     """
 
@@ -19,7 +20,7 @@ class ORMView(BaseModel):
 def _to_ixdtf(value: datetime) -> str:
     """Format a datetime as an RFC 9557 IXDTF string with a bracketed zone suffix.
 
-    Every timestamp this app stores is UTC (see crud.models.base.IdentifiedBase), so
+    Every timestamp this app stores is UTC (see craftainer_tool_crud.models.base.IdentifiedBase), so
     the suffix is always the fixed `[UTC]` zone name rather than a per-value lookup.
     """
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z") + "[UTC]"
@@ -29,9 +30,9 @@ def _to_naive_utc(value: datetime) -> datetime:
     """Normalize a tz-aware datetime to naive UTC; a naive value is passed through as-is.
 
     Every timestamp this app stores is naive-but-conceptually-UTC (see
-    crud.models.base.IdentifiedBase), so a tz-aware value accepted on an input view
+    craftainer_tool_crud.models.base.IdentifiedBase), so a tz-aware value accepted on an input view
     (e.g. a Schedulable field like `publish_at` on app.views.hero_v2.HeroV2Update)
-    needs the same normalization crud.controllers.crud_query._cast_datetime already
+    needs the same normalization craftainer_tool_crud.controllers.crud_query._cast_datetime already
     applies to a tz-aware filter value -- otherwise comparing it against a naive
     column raises outright (SQLAlchemyRepository) or against a naive `now()`
     (InMemoryRepository). A value already naive here (e.g. an ORM instance's own
@@ -46,7 +47,7 @@ IXDTFDatetime = Annotated[
     PlainSerializer(_to_ixdtf, return_type=str, when_used="json"),
 ]
 """`when_used="json"`: a plain `.model_dump()` (python mode) keeps a real `datetime`
-object rather than this IXDTF string -- required since crud.interfaces.base.
+object rather than this IXDTF string -- required since craftainer_tool_crud.interfaces.base.
 CRUDInterface.create/update/update_many feed a view's own `.model_dump(
 exclude_unset=True)` straight into a repository write, which needs a real
 `datetime` to compare/store, not a string. `.model_dump(mode="json")` (used by

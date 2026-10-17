@@ -1,6 +1,6 @@
 """Query parsing and OLS forecasting shared by the generic `/stats`/`/predict` routes.
 
-Numeric/categorical field classification reuses crud.controllers.crud_query.
+Numeric/categorical field classification reuses craftainer_tool_crud.controllers.crud_query.
 field_specs -- the single source of truth for what "kind" a schema field is --
 but narrows FieldKind.NUMBER (which also covers date/datetime fields, for
 range-filtering purposes -- see crud_query's own module docstring) down to
@@ -17,7 +17,7 @@ docs/plans/2026-09-crud-stats-and-predictions.md's "Predictions" scope decision
 for why: no new heavy dependency, no trained-model storage/retraining/
 versioning concerns, consistent with this template's low-dependency style.
 Deliberately generic over *what* series is being forecast (`BucketValue`, a
-plain bucket_start/float pair) rather than tied to crud.repositories.stats.
+plain bucket_start/float pair) rather than tied to craftainer_tool_crud.repositories.stats.
 TimeBucketCount's integer `count`: the default (no `field` given) forecasts a
 bucketed record-count series (`count_series_as_values` below adapts
 Repository.stats's own `time_series`); a `field`-targeted forecast instead sums
@@ -35,8 +35,8 @@ from datetime import datetime, timedelta
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 
-from crud.controllers.crud_query import FieldKind, field_specs
-from crud.repositories.stats import TimeBucket, TimeBucketCount
+from craftainer_tool_crud.controllers.crud_query import FieldKind, field_specs
+from craftainer_tool_crud.repositories.stats import TimeBucket, TimeBucketCount
 
 # A predicted series longer than this would be a near-meaningless naive linear
 # projection anyway -- caps the request the same way crud_router._MAX_LIMIT caps
@@ -55,7 +55,7 @@ MAX_HISTORY_RECORDS = 1000
 class InsufficientHistoryError(Exception):
     """Raised by forecast() when fewer than 2 time buckets of history exist.
 
-    crud.controllers.crud_router's `/predict` route catches this and re-raises it
+    craftainer_tool_crud.controllers.crud_router's `/predict` route catches this and re-raises it
     as a 422 RequestValidationError, the same status/shape every other
     caller-input problem in this layer uses (see e.g. crud_query.parse_filters).
     """
@@ -153,7 +153,7 @@ def bucket_field_sums(
 def _bucket_start(bucket: TimeBucket, value: datetime) -> datetime:
     """Truncate `value` to the start of its UTC calendar bucket.
 
-    Mirrors crud.repositories.memory's own `_bucket_start` helper.
+    Mirrors craftainer_tool_crud.repositories.memory's own `_bucket_start` helper.
     """
     day_start = value.replace(hour=0, minute=0, second=0, microsecond=0)
     if bucket is TimeBucket.DAY:

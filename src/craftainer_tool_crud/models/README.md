@@ -7,7 +7,7 @@ layer in `crud`'s own import order — never imports from any other
 
 - `base.py` — `Base` (the declarative base every model inherits from),
   `IdentifiedBase` (adds the single-column integer `id` primary key
-  `crud.repositories`/`crud.interfaces`'s generics are bound to), the async
+  `craftainer_tool_crud.repositories`/`craftainer_tool_crud.interfaces`'s generics are bound to), the async
   `engine`/`async_session_factory`, `get_db` (the FastAPI dependency
   that yields a request-scoped `AsyncSession`, committed on success), and
   `DBSession` (the `Annotated` alias that depends on it at
@@ -38,7 +38,7 @@ instead, not here — see its own `README.md`.
 
 ## Don't
 
-- Import from `crud.views`, `crud.repositories`, or `crud.interfaces` —
+- Import from `craftainer_tool_crud.views`, `craftainer_tool_crud.repositories`, or `craftainer_tool_crud.interfaces` —
   see `../README.md`'s "Layering" section.
 - Add resource-specific code here — a resource's own model belongs in
   `app/models/` instead, subclassing `IdentifiedBase`/the mixins here.

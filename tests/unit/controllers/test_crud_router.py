@@ -1,7 +1,8 @@
 """Unit test: build_json_router/build_xml_router/build_web_router's generic route wiring.
 
 Exercises the three router factories directly against a minimal fake schema/model
-pair, not tied to Hero -- mirrors how tests/unit/crud/interfaces/test_compat.py tests
+pair, not tied to Hero -- mirrors how tests/unit/craftainer_tool_crud/interfaces/test_compat.py
+tests
 CompatCRUD generically.
 """
 
@@ -16,12 +17,21 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ConfigDict
 
-from crud.controllers import crud_actions
-from crud.controllers import crud_router as crud_router_module
-from crud.controllers.crud_router import build_json_router, build_web_router, build_xml_router
-from crud.interfaces.base import CRUDInterface, EventSource, InMemoryEventSink
-from crud.repositories.filtering import FilterClause, FilterOp, SortClause
-from crud.repositories.stats import NumericFieldStats, ResourceStats, TimeBucket, TimeBucketCount
+from craftainer_tool_crud.controllers import crud_actions
+from craftainer_tool_crud.controllers import crud_router as crud_router_module
+from craftainer_tool_crud.controllers.crud_router import (
+    build_json_router,
+    build_web_router,
+    build_xml_router,
+)
+from craftainer_tool_crud.interfaces.base import CRUDInterface, EventSource, InMemoryEventSink
+from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
+from craftainer_tool_crud.repositories.stats import (
+    NumericFieldStats,
+    ResourceStats,
+    TimeBucket,
+    TimeBucketCount,
+)
 
 
 @dataclass
@@ -467,7 +477,7 @@ def test_json_router_bulk_update_logs_an_audit_entry(caplog: pytest.LogCaptureFi
     )
     try:
         client.post("/gadgets", json={"name": "apple", "tags": []})
-        with caplog.at_level(logging.INFO, logger="crud.controllers.crud_actions"):
+        with caplog.at_level(logging.INFO, logger="craftainer_tool_crud.controllers.crud_actions"):
             response = client.patch(
                 "/gadgets", params={"name__icontains": "ap"}, json={"tags": ["updated"]}
             )
@@ -485,7 +495,7 @@ def test_json_router_bulk_delete_logs_an_audit_entry(caplog: pytest.LogCaptureFi
     )
     try:
         client.post("/gadgets", json={"name": "apple", "tags": []})
-        with caplog.at_level(logging.INFO, logger="crud.controllers.crud_actions"):
+        with caplog.at_level(logging.INFO, logger="craftainer_tool_crud.controllers.crud_actions"):
             response = client.delete("/gadgets", params={"name__icontains": "ap"})
         assert response.status_code == 200
         assert "Bulk delete: actor=unknown path=/gadgets" in caplog.text
@@ -713,7 +723,8 @@ async def _no_events_ever() -> AsyncIterator[dict[str, Any]]:
     Route-wiring tests below use this finite stand-in instead, so the request
     actually completes; InMemoryEventSink's own publish()/subscribe() fan-out
     behavior is covered directly, with no HTTP layer at all, by
-    tests/unit/crud/interfaces/test_base.py's `test_in_memory_event_sink_*` tests, and
+    tests/unit/craftainer_tool_crud/interfaces/test_base.py's `test_in_memory_event_sink_*` tests,
+    and
     genuine concurrent delivery over a live SSE connection is covered by
     tests/integration/crud_1/heroes/test_heroes_v2_events.py against the real
     Mosquitto service.

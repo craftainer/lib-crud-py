@@ -1,6 +1,6 @@
 """Shared id/filter/bulk decision logic for the CRUD router factories.
 
-Route bodies factored out of crud.controllers.crud_router so build_json_router and
+Route bodies factored out of craftainer_tool_crud.controllers.crud_router so build_json_router and
 build_xml_router share one implementation of "id present -> single record;
 otherwise -> filtered list, or a bulk update/delete over whatever filters are
 given" -- each router factory wraps the same calls in its own response format
@@ -16,16 +16,16 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 
 from app.config import get_settings
-from crud.controllers.crud_query import (
+from craftainer_tool_crud.controllers.crud_query import (
     parse_filters,
     parse_include_archived,
     parse_include_unpublished,
     parse_sort,
 )
-from crud.interfaces.base import CRUDLike
-from crud.repositories.base import RecordLockedError
-from crud.repositories.filtering import FilterClause
-from crud.views.bulk import BulkDeleteResult, BulkUpdateResult
+from craftainer_tool_crud.interfaces.base import CRUDLike
+from craftainer_tool_crud.repositories.base import RecordLockedError
+from craftainer_tool_crud.repositories.filtering import FilterClause
+from craftainer_tool_crud.views.bulk import BulkDeleteResult, BulkUpdateResult
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -87,10 +87,10 @@ async def resolve_list_or_get(
 ) -> Any:  # BaseModel | list[BaseModel], see module docstring
     """Return one record by id, or a filtered/sorted list of matching records.
 
-    `?include_archived=true`/`?include_unpublished=true` (see crud.controllers.
+    `?include_archived=true`/`?include_unpublished=true` (see craftainer_tool_crud.controllers.
     crud_query) are passed through unconditionally -- a CRUDInterface backed by a
     model with no Archivable/Schedulable mixin ignores them (see
-    crud.repositories.sqlalchemy/crud.repositories.memory).
+    craftainer_tool_crud.repositories.sqlalchemy/craftainer_tool_crud.repositories.memory).
     """
     include_archived = parse_include_archived(request.query_params)
     include_unpublished = parse_include_unpublished(request.query_params)

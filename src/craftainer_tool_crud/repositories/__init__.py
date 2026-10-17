@@ -1,1 +1,1 @@
-"""Storage-agnostic CRUD repositories that crud.interfaces' generic interface talks to."""
+"""Storage-agnostic CRUD repositories that the generic craftainer_tool_crud.interfaces use."""

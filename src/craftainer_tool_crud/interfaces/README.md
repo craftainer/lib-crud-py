@@ -1,8 +1,8 @@
 # crud/interfaces/
 
 The generic CRUD interface: feed it a view (a resource's own, e.g.
-`app.views.hero_v2`, built on `crud.views.base.ORMView`) and a
-repository (`crud.repositories`) to persist it through, and it exposes
+`app.views.hero_v2`, built on `craftainer_tool_crud.views.base.ORMView`) and a
+repository (`craftainer_tool_crud.repositories`) to persist it through, and it exposes
 `get`/`list`/`create`/`update`/`delete`/`count`/`update_many`/
 `delete_many` in terms of that view — a new resource never needs its own
 CRUD class, only a model, a view, and a router that wires the two through
@@ -11,12 +11,12 @@ CRUD class, only a model, a view, and a router that wires the two through
 - `base.py` — `CRUDInterface[SchemaT, ModelT]`, and the `CRUDLike[SchemaT]`
   `Protocol` describing its full method shape. `CRUDInterface` converts to/
   from the backing ORM model entirely via the view's own `from_attributes`
-  support (see `crud.views.base.ORMView`) — this module has no
-  resource-specific code and imports nothing from `crud.views` or
-  `crud.repositories` beyond their base types. `list`/`update_many`/
+  support (see `craftainer_tool_crud.views.base.ORMView`) — this module has no
+  resource-specific code and imports nothing from `craftainer_tool_crud.views` or
+  `craftainer_tool_crud.repositories` beyond their base types. `list`/`update_many`/
   `delete_many`/`count` take `filters`/`sort` sequences from
-  `crud.repositories.filtering`, passed straight through to the repository —
-  see `crud.controllers.crud_query` for where those come from on an actual
+  `craftainer_tool_crud.repositories.filtering`, passed straight through to the repository —
+  see `craftainer_tool_crud.controllers.crud_query` for where those come from on an actual
   request. `CompatCRUD` (below) satisfies `CRUDLike` too, structurally —
   `../controllers/crud_router.py`'s router factories are written against
   `CRUDLike` rather than concretely against `CRUDInterface`, specifically so
@@ -37,7 +37,7 @@ CRUD class, only a model, a view, and a router that wires the two through
   `read_scoped=False`: every caller reads every hero, same as before this
   was added, but can only update/delete their own),
   `docs/adrs/0011-owner-scoped-crud-example-resource.md` for the full
-  rationale, and `tests/unit/crud/interfaces/test_base.py`'s `test_owner_*`/
+  rationale, and `tests/unit/craftainer_tool_crud/interfaces/test_base.py`'s `test_owner_*`/
   `test_read_scoped_*` tests for the scoped, unscoped, and open-read paths.
   `get`/`list`/`count` also take `include_archived`/`include_unpublished`,
   passed straight through to the repository — see `../repositories/
@@ -61,7 +61,7 @@ CRUD class, only a model, a view, and a router that wires the two through
   `RepositoryRevisionSink`, the concrete adapter every resource that opts
   in actually uses — it wraps a plain `Repository[Revision]` (the same
   `build_repository_provider`/`SQLAlchemyRepository`/`InMemoryRepository`
-  machinery every other resource uses, since `crud.models.revision.
+  machinery every other resource uses, since `craftainer_tool_crud.models.revision.
   Revision` is just another `IdentifiedBase` model), so no bespoke storage
   class is needed. Pass `CRUDInterface(..., revisions=RepositoryRevisionSink
   (repo), resource="hero", actor=claims["sub"])` to log every successful
@@ -69,7 +69,7 @@ CRUD class, only a model, a view, and a router that wires the two through
   default) changes nothing, the same opt-in shape as `owner`. `actor` is
   resolved from claims the same way `owner`'s `value` is — see
   `app.crud_1.heroes.heroes_v2.get_hero_crud` for the worked example, and
-  `crud.controllers.crud_router`'s `/revisions` route for reading it back.
+  `craftainer_tool_crud.controllers.crud_router`'s `/revisions` route for reading it back.
 
   `restore`/`restore_many` mirror `delete`/`delete_many`'s own shape
   (id-or-filters, single-or-bulk), clearing `archived_at` instead of
@@ -96,7 +96,7 @@ CRUD class, only a model, a view, and a router that wires the two through
   `CRUDInterface(..., events=EventSink)` and add
   `event_source_dependency=` to `build_json_router`/`build_resource_router`
   (see `../controllers/README.md`'s "Generic CRUD router factories") —
-  `events=None` (the default) changes nothing. `crud.interfaces.dependency.
+  `events=None` (the default) changes nothing. `craftainer_tool_crud.interfaces.dependency.
   build_event_sink_provider(resource)`/`build_event_source_provider(resource)`
   choose between the two adapters by `Settings.mode`, the same pattern as
   `build_repository_provider` — see `app.crud_1.heroes.heroes_v2.
@@ -135,7 +135,7 @@ CRUD class, only a model, a view, and a router that wires the two through
 
 ## Don't
 
-- Import from `crud.controllers` — see `../README.md`'s "Layering"
+- Import from `craftainer_tool_crud.controllers` — see `../README.md`'s "Layering"
   section.
 - Add a resource-specific method to `CRUDInterface` — if a resource
   needs behavior beyond the five generic operations, add it in that

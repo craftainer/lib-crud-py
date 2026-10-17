@@ -14,7 +14,7 @@ import pytest
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 
-from crud.controllers.crud_stats import (
+from craftainer_tool_crud.controllers.crud_stats import (
     BucketValue,
     InsufficientHistoryError,
     bucket_field_sums,
@@ -25,7 +25,7 @@ from crud.controllers.crud_stats import (
     parse_bucket,
     parse_predict_field,
 )
-from crud.repositories.stats import TimeBucket, TimeBucketCount
+from craftainer_tool_crud.repositories.stats import TimeBucket, TimeBucketCount
 
 
 class _Status(Enum):

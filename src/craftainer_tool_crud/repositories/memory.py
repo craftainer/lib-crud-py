@@ -3,14 +3,14 @@
 Parameterized purely by a SQLAlchemy model class, matching sqlalchemy.py's shape --
 adding a new mock-backed resource never requires a new repository class, only a
 model. Unlike SQLAlchemyRepository, there is no server to supply `created_at`/
-`updated_at` via `server_default`/`onupdate` (see crud.models.base.IdentifiedBase),
+`updated_at` via `server_default`/`onupdate` (see craftainer_tool_crud.models.base.IdentifiedBase),
 so this repository sets them itself -- as naive UTC datetimes, matching the naive
 `TIMESTAMP` columns Postgres stores them as (both conventionally UTC, per
 IdentifiedBase's own docstring), so a datetime filter value (normalized to naive
-UTC the same way in crud.controllers.crud_query) compares correctly against either
+UTC the same way in craftainer_tool_crud.controllers.crud_query) compares correctly against either
 backend.
 
-Archivable/Schedulable/Lockable (see crud.models.mixins) are detected via `hasattr`
+Archivable/Schedulable/Lockable (see craftainer_tool_crud.models.mixins) are detected via `hasattr`
 on a stored instance -- a model without one of these mixins is unaffected, matching
 how `created_at`/`updated_at` are already special-cased here.
 
@@ -24,14 +24,14 @@ A few branches below are `# pragma: no cover`, for three different reasons:
   genuinely-hard-delete path (for a model with no `archived_at` at all)
   therefore can never run through any test here without a second,
   Archivable-less model existing purely to exercise it. The plan behind
-  crud.models.mixins keeps that path so a future non-Archivable resource still
+  craftainer_tool_crud.models.mixins keeps that path so a future non-Archivable resource still
   gets today's hard-delete behavior unchanged (see docs/adrs/0012-soft-delete-
   via-marker-column.md) -- it's real, load-bearing generic code, just not one
   this app's own single example resource can reach.
 - Hero's own CRUDInterface always sets `owner` (see app.crud_1.heroes.
   heroes_v2.get_hero_crud), which routes every single-record update/delete/
   restore through this repository's own update_many/delete_many/restore_many
-  instead (see crud.interfaces.base.OwnerScope's docstring) -- so update()/
+  instead (see craftainer_tool_crud.interfaces.base.OwnerScope's docstring) -- so update()/
   delete()/restore() (the non-`_many` single-record methods) can never run
   through tests/e2e either. tests/unit/repositories/test_memory.py calls them
   directly, which is what actually covers them for the primary (`pytest`, i.e.
@@ -56,10 +56,10 @@ from typing import Any
 
 from sqlalchemy import inspect as sa_inspect
 
-from crud.models.base import IdentifiedBase
-from crud.repositories.base import RecordLockedError
-from crud.repositories.filtering import FilterClause, FilterOp, SortClause
-from crud.repositories.stats import (
+from craftainer_tool_crud.models.base import IdentifiedBase
+from craftainer_tool_crud.repositories.base import RecordLockedError
+from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
+from craftainer_tool_crud.repositories.stats import (
     LifecycleStats,
     NumericFieldStats,
     ResourceStats,
@@ -69,7 +69,7 @@ from crud.repositories.stats import (
 
 logger = logging.getLogger(__name__)
 
-# A FilterOp.REGEX pattern reaches Python's re.search verbatim -- crud.controllers.
+# A FilterOp.REGEX pattern reaches Python's re.search verbatim -- craftainer_tool_crud.controllers.
 # crud_query's own length cap bounds a pattern's *size*, not its worst-case
 # backtracking cost (a short pattern like "(a+)+$" is already catastrophic against a
 # crafted string). re has no built-in backtracking limit, so this repository (unlike
@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 # exposed: a pathological match run inline here blocks the whole event loop, not just
 # one request. `_REGEX_TIMEOUT_SECONDS` bounds that with a wall-clock alarm --
 # relies on running on the main thread of a single-process worker (true for this
-# app's asyncio event loop; see crud.models.base's NullPool comment for the same
+# app's asyncio event loop; see craftainer_tool_crud.models.base's NullPool comment for the same
 # single-worker assumption elsewhere) -- a runaway match is aborted and treated as
 # "no match" rather than hanging the process indefinitely.
 _REGEX_TIMEOUT_SECONDS = 1
@@ -139,7 +139,8 @@ def _with_scalar_defaults(model: type[Any], data: dict[str, Any]) -> dict[str, A
 
     SQLAlchemy only applies `mapped_column(default=...)` when a row is actually
     flushed to a real database -- this repository never flushes anywhere, so a mixin
-    like Draftable/Lockable (see crud.models.mixins) would otherwise leave its column
+    like Draftable/Lockable (see craftainer_tool_crud.models.mixins) would otherwise leave its
+    column
     unset (None) on a record created without that field, instead of the column's
     own declared default (e.g. `is_draft=True`).
     """
@@ -170,7 +171,7 @@ def _known_field(instance: object, field: str) -> Any:  # noqa: ANN401
 
     Same defense-in-depth rationale as SQLAlchemyRepository._column: FilterClause.field/
     SortClause.field are only meant to reach here already validated against a
-    resource's schema (crud.controllers.crud_query.parse_filters/parse_sort) -- this
+    resource's schema (craftainer_tool_crud.controllers.crud_query.parse_filters/parse_sort) -- this
     check is what turns a caller that bypasses that validation into a clear error
     instead of either an AttributeError (an unrecognized name) or a silent read of an
     unintended attribute.
@@ -218,7 +219,7 @@ def _is_visible(instance: object, *, include_archived: bool, include_unpublished
 def _raise_if_locked(instance: object, data: dict[str, Any] | None) -> None:
     """Raise RecordLockedError unless `instance` isn't locked or `data` unlocks-only.
 
-    See crud.models.mixins.Lockable's own docstring: the unlock escape hatch only
+    See craftainer_tool_crud.models.mixins.Lockable's own docstring: the unlock escape hatch only
     applies when `data` is exactly `{"is_locked": False}`, not a PATCH that also
     changes other fields in the same request.
     """
@@ -296,7 +297,7 @@ class InMemoryRepository[ModelT: IdentifiedBase]:
     ) -> int:
         """Return how many records match the given filters.
 
-        Called by crud.controllers.crud_actions before a bulk update/delete, to cap
+        Called by craftainer_tool_crud.controllers.crud_actions before a bulk update/delete, to cap
         how many records a single action can affect.
         """
         return len(
@@ -358,7 +359,7 @@ class InMemoryRepository[ModelT: IdentifiedBase]:
         those, a not-yet-or-no-longer-published (Schedulable) row is still
         reachable here -- it isn't deleted, just not currently visible, and an
         editor must still be able to correct a scheduled record before it goes
-        live (see crud.models.mixins.Schedulable).
+        live (see craftainer_tool_crud.models.mixins.Schedulable).
         """
         instances = [
             instance

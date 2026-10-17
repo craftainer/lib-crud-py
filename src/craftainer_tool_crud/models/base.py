@@ -33,11 +33,13 @@ class Base(DeclarativeBase):
 class IdentifiedBase(Base):
     """Base for models with a single-column integer primary key named `id`.
 
-    Repository/CRUD generics (see crud.repositories and crud.interfaces) are bound to this
+    Repository/CRUD generics (see craftainer_tool_crud.repositories and
+    craftainer_tool_crud.interfaces) are bound to this
     type so they can order/select by `id` without each model redeclaring the column.
     Also carries `created_at`/`updated_at`, server-assigned in Postgres and set by
-    hand in crud.repositories.memory.InMemoryRepository (MODE=mock has no server to
-    default/update them) -- see crud.views.base.IXDTFDatetime for how they're serialized.
+    hand in craftainer_tool_crud.repositories.memory.InMemoryRepository (MODE=mock has no server to
+    default/update them) -- see craftainer_tool_crud.views.base.IXDTFDatetime for how they're
+    serialized.
     """
 
     __abstract__ = True

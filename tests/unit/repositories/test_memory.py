@@ -10,13 +10,13 @@ import pytest
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.hero import Hero
-from crud.models.base import IdentifiedBase
-from crud.models.mixins import Lockable
-from crud.repositories import memory
-from crud.repositories.base import RecordLockedError
-from crud.repositories.filtering import FilterClause, FilterOp, SortClause
-from crud.repositories.memory import InMemoryRepository
-from crud.repositories.stats import TimeBucket
+from craftainer_tool_crud.models.base import IdentifiedBase
+from craftainer_tool_crud.models.mixins import Lockable
+from craftainer_tool_crud.repositories import memory
+from craftainer_tool_crud.repositories.base import RecordLockedError
+from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
+from craftainer_tool_crud.repositories.memory import InMemoryRepository
+from craftainer_tool_crud.repositories.stats import TimeBucket
 
 
 @pytest.fixture
@@ -135,7 +135,7 @@ async def test_get_update_and_delete_by_id(repository: InMemoryRepository[Hero])
     Exercised directly here since Hero's own real HTTP routes no longer call these
     for update/delete -- app.crud_1.heroes.heroes_v2.get_hero_crud always sets an
     OwnerScope, which routes CRUDInterface.update/delete through update_many/
-    delete_many instead (see crud.interfaces.base.OwnerScope's docstring).
+    delete_many instead (see craftainer_tool_crud.interfaces.base.OwnerScope's docstring).
     """
     heroes = await repository.list()
     batman = next(hero for hero in heroes if hero.name == "Batman")
@@ -179,7 +179,8 @@ async def test_lock_blocks_update_and_delete_except_the_unlocking_update(
 ) -> None:
     """A locked Hero refuses update/delete (single and bulk), except an update whose
     data is exactly `{"is_locked": False}` -- see
-    crud.repositories.base.RecordLockedError and crud.models.mixins.Lockable.
+    craftainer_tool_crud.repositories.base.RecordLockedError and
+    craftainer_tool_crud.models.mixins.Lockable.
     """
     locked = await repository.create(
         {"name": "Locked Hero", "powers": ["Immovable"], "is_locked": True}
@@ -214,7 +215,7 @@ async def test_schedulable_visibility_excludes_future_publish_and_past_unpublish
     repository: InMemoryRepository[Hero],
 ) -> None:
     """get()/list() exclude a not-yet-published or no-longer-published Hero by default,
-    and `include_unpublished=True` reaches it -- see crud.models.mixins.Schedulable.
+    and `include_unpublished=True` reaches it -- see craftainer_tool_crud.models.mixins.Schedulable.
     """
     now = datetime.now(UTC).replace(tzinfo=None)
     not_yet_published = await repository.create(
@@ -289,7 +290,7 @@ async def test_stats_reports_total_numeric_and_categorical(
     assert result.numeric["id"].maximum is not None
     assert result.numeric["id"].average is not None
     assert result.numeric["id"].total is not None
-    # Hero's is_draft defaults to True (see crud.models.mixins.Draftable) -- every
+    # Hero's is_draft defaults to True (see craftainer_tool_crud.models.mixins.Draftable) -- every
     # seeded hero here was created via the plain create() path, so all 3 land in
     # the same "True" bucket.
     assert result.categorical["is_draft"] == {"True": 3}
@@ -376,7 +377,7 @@ async def test_stats_lifecycle_with_only_one_mixin_present() -> None:
 
 
 class _PlainRecord(IdentifiedBase):
-    """A model with none of crud.models.mixins' record-lifecycle mixins.
+    """A model with none of craftainer_tool_crud.models.mixins' record-lifecycle mixins.
 
     Only used to prove stats()'s `lifecycle=None` no-op case -- see
     ../../../src/app/repositories/README.md's "Record-lifecycle mixins" section:

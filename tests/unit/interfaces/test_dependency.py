@@ -8,15 +8,15 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.hero import Hero as HeroModel
-from crud.interfaces import dependency as dependency_module
-from crud.interfaces.base import InMemoryEventSink, MQTTEventSink, MQTTEventSource
-from crud.interfaces.dependency import (
+from craftainer_tool_crud.interfaces import dependency as dependency_module
+from craftainer_tool_crud.interfaces.base import InMemoryEventSink, MQTTEventSink, MQTTEventSource
+from craftainer_tool_crud.interfaces.dependency import (
     build_event_sink_provider,
     build_event_source_provider,
     build_repository_provider,
 )
-from crud.repositories.memory import InMemoryRepository
-from crud.repositories.sqlalchemy import SQLAlchemyRepository
+from craftainer_tool_crud.repositories.memory import InMemoryRepository
+from craftainer_tool_crud.repositories.sqlalchemy import SQLAlchemyRepository
 
 
 def test_mock_mode_shares_one_repository_instance_across_calls(
@@ -57,7 +57,7 @@ def test_mock_mode_event_sink_and_source_share_one_instance_per_resource(
 
     Required for MODE=mock's delivery to work at all: a publish() call from the sink
     side must reach the subscribe()-registered queues on the source side -- see
-    crud.interfaces.dependency's own `_mock_event_sink_for` docstring.
+    craftainer_tool_crud.interfaces.dependency's own `_mock_event_sink_for` docstring.
     """
     monkeypatch.setattr(dependency_module.settings, "mode", "mock")
     dependency_module._mock_event_sinks.clear()

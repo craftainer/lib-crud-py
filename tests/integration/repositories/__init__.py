@@ -1,1 +1,1 @@
-"""Integration tests for crud.repositories."""
+"""Integration tests for craftainer_tool_crud.repositories."""

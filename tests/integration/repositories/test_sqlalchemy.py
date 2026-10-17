@@ -8,15 +8,15 @@ from sqlalchemy import Integer, Table
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.hero import Hero
-from crud.models.base import IdentifiedBase, async_session_factory, engine
-from crud.repositories.base import RecordLockedError
-from crud.repositories.filtering import FilterClause, FilterOp, SortClause
-from crud.repositories.sqlalchemy import SQLAlchemyRepository
-from crud.repositories.stats import TimeBucket
+from craftainer_tool_crud.models.base import IdentifiedBase, async_session_factory, engine
+from craftainer_tool_crud.repositories.base import RecordLockedError
+from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
+from craftainer_tool_crud.repositories.sqlalchemy import SQLAlchemyRepository
+from craftainer_tool_crud.repositories.stats import TimeBucket
 
 
 class _PlainRecord(IdentifiedBase):
-    """A model with none of crud.models.mixins' record-lifecycle mixins.
+    """A model with none of craftainer_tool_crud.models.mixins' record-lifecycle mixins.
 
     Only used by test_stats_lifecycle_is_none_without_any_mixin below, to exercise
     SQLAlchemyRepository._lifecycle_stats's "no mixin present at all" branch
@@ -58,7 +58,7 @@ async def test_crud_roundtrip_against_real_postgres() -> None:
         assert updated is not None
         assert updated.powers == ["Repulsor blasts"]
 
-        # Hero is Archivable (see crud.models.mixins): delete() marks archived_at
+        # Hero is Archivable (see craftainer_tool_crud.models.mixins): delete() marks archived_at
         # rather than removing the row, so get() excludes it by default but the
         # row itself is still there -- an archived row is excluded from normal
         # reads, so a second delete() and a plain update() both act as if the
@@ -177,8 +177,8 @@ async def test_every_filter_op_against_real_postgres() -> None:
 async def test_lock_blocks_update_and_delete_except_the_unlocking_update() -> None:
     """A locked Hero refuses update/delete (single and bulk), except an update whose
     data is exactly `{"is_locked": False}` -- see
-    crud.repositories.base.RecordLockedError and
-    crud.repositories.sqlalchemy._raise_if_locked's own docstring.
+    craftainer_tool_crud.repositories.base.RecordLockedError and
+    craftainer_tool_crud.repositories.sqlalchemy._raise_if_locked's own docstring.
 
     Runs inside one uncommitted session, same isolation as the tests above.
     """
@@ -220,7 +220,7 @@ async def test_lock_blocks_update_and_delete_except_the_unlocking_update() -> No
 
 async def test_schedulable_visibility_excludes_future_publish_and_past_unpublish() -> None:
     """get()/list() exclude a not-yet-published or no-longer-published Hero by default,
-    and `include_unpublished=True` reaches it -- see crud.models.mixins.Schedulable.
+    and `include_unpublished=True` reaches it -- see craftainer_tool_crud.models.mixins.Schedulable.
 
     Runs inside one uncommitted session, same isolation as the tests above.
     """

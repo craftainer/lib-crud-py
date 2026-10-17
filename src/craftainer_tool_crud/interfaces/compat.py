@@ -13,8 +13,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from crud.interfaces.base import CRUDInterface
-from crud.repositories.filtering import FilterClause, SortClause
+from craftainer_tool_crud.interfaces.base import CRUDInterface
+from craftainer_tool_crud.repositories.filtering import FilterClause, SortClause
 
 
 class CompatCRUD[LegacySchemaT: BaseModel, SchemaT: BaseModel, ModelT]:
@@ -46,7 +46,7 @@ class CompatCRUD[LegacySchemaT: BaseModel, SchemaT: BaseModel, ModelT]:
         """Return the record with the given id in the legacy shape, or None.
 
         `include_archived`/`include_unpublished` are forwarded to the wrapped
-        CRUDInterface unconditionally -- see crud.controllers.crud_actions.
+        CRUDInterface unconditionally -- see craftainer_tool_crud.controllers.crud_actions.
         resolve_list_or_get, which passes them on every request regardless of
         whether the underlying model actually carries the matching mixin.
         """
@@ -85,7 +85,7 @@ class CompatCRUD[LegacySchemaT: BaseModel, SchemaT: BaseModel, ModelT]:
     ) -> int:
         """Return how many records match the given filters.
 
-        Called by crud.controllers.crud_actions before a bulk update/delete, to cap
+        Called by craftainer_tool_crud.controllers.crud_actions before a bulk update/delete, to cap
         how many records a single action can affect.
         """
         return await self._crud.count(

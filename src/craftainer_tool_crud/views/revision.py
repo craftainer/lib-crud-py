@@ -1,8 +1,8 @@
-"""Pydantic view for the shared revision-history log (crud.models.revision.Revision)."""
+"""Pydantic view for the shared revision-history log (models.revision.Revision)."""
 
 from typing import Any
 
-from crud.views.base import IXDTFDatetime, ORMView
+from craftainer_tool_crud.views.base import IXDTFDatetime, ORMView
 
 
 class RevisionView(ORMView):

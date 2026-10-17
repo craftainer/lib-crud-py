@@ -40,7 +40,7 @@ modules (`app.config`, `app.rate_limit`, `app.web_components`,
 `app.xml_codec`) — those sit below every resource-specific `app/`
 module in `app/`'s own layering (see `../app/README.md`'s "Layering"),
 so this doesn't create an import cycle between the two packages: `app`'s
-resource-specific modules import from `crud`, and `crud.controllers`
+resource-specific modules import from `crud`, and `craftainer_tool_crud.controllers`
 imports back only from `app`'s lowest, resource-agnostic flat modules,
 never from `app.models`/`app.views`/`app.crud_1` or anything built on
 top of them.

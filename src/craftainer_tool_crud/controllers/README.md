@@ -50,7 +50,7 @@ and still needed as the full absolute path (e.g. `/crud/v1/heroes/v2`)
 rendered HTML/JS at build time and can't be derived from a later
 `include_router` call's prefix the way FastAPI's own routing can. Each
 factory takes `crud_dependency` as an
-`Annotated[crud.interfaces.base.CRUDLike[...], Depends(...)]`-shaped
+`Annotated[craftainer_tool_crud.interfaces.base.CRUDLike[...], Depends(...)]`-shaped
 value — `CRUDLike` is a `Protocol` both `CRUDInterface` (current
 version) and `CompatCRUD` (deprecated version, see `../../app/crud_1/
 README.md`'s "API and model versioning") satisfy structurally, so the
@@ -68,11 +68,11 @@ missing. `id` names the query key regardless of a resource's own id-field
 name, the same way every generated route used to name its path parameter
 `record_id` before addressing moved off the path. Without `id`, `GET` lists
 (optionally filtered/sorted, see
-`crud.controllers.crud_query`'s module docstring for the `field__op=value`/
+`craftainer_tool_crud.controllers.crud_query`'s module docstring for the `field__op=value`/
 `sort=` wire format) and `PATCH`/`DELETE` act in bulk over whatever filters
 are given — a request with **no** filters and no `id` is rejected (422 via
 `RequestValidationError`) rather than silently acting on every record.
-`crud.controllers.crud_actions`'s `resolve_list_or_get`/`resolve_update`/
+`craftainer_tool_crud.controllers.crud_actions`'s `resolve_list_or_get`/`resolve_update`/
 `resolve_delete` implement this id/filter/bulk decision once, shared by both
 factories; each wraps the same calls in its own response format (JSON body
 vs. an XML-rendered `Response`). Before a bulk update/delete actually runs,
@@ -83,7 +83,7 @@ technically-non-empty but always-true filter (e.g. `id__gte=0`) would
 otherwise still match every row. A bulk action that does run is logged
 (`INFO`, actor/path/filters/ids) for auditing, and is itself rate-limited —
 see `../../app/README.md`'s "Rate limiting". A bulk action's response
-(`crud.views.bulk.BulkUpdateResult`/`BulkDeleteResult`) carries the matched
+(`craftainer_tool_crud.views.bulk.BulkUpdateResult`/`BulkDeleteResult`) carries the matched
 count and the ids affected, not the full records. `build_json_router` also
 serves `GET <prefix>/filters`, the same per-field-type introspection
 `crud_query.py` uses to parse, as JSON — the `<resource>-list>` web component
@@ -108,14 +108,14 @@ all-optional `*Update` view), if passed, adds `POST <prefix>/draft`
 <prefix>/publish?id=` (re-validates against `create_schema`, 422 naming
 any field still missing, then flips `is_draft=False`). `archivable=True`
 adds `POST <prefix>/restore`, mirroring delete's own id-or-filters/
-single-or-bulk shape (`crud.controllers.crud_actions.resolve_restore`,
+single-or-bulk shape (`craftainer_tool_crud.controllers.crud_actions.resolve_restore`,
 same rate-limit/`exempt_single_record_action` treatment as the bulk
 update/delete routes). `revision_repository_dependency` + `resource`
 together add `GET <prefix>/revisions?id=`, a plain query against the
-shared `Revision` table (`crud.models.revision`) — not routed through
+shared `Revision` table (`craftainer_tool_crud.models.revision`) — not routed through
 `crud_dependency`/`CRUDLike` at all, since it reads a different model
 entirely. `event_source_dependency` (an
-`Annotated[crud.interfaces.base.EventSource, Depends(...)]`-shaped value,
+`Annotated[craftainer_tool_crud.interfaces.base.EventSource, Depends(...)]`-shaped value,
 mirroring `crud_dependency`'s own shape) adds `GET <prefix>/events`: a
 `StreamingResponse` (`media_type="text/event-stream"`) of that resource's
 create/update/update_many/delete/delete_many/restore/restore_many
@@ -141,7 +141,7 @@ ordinary-least-squares linear-regression forecast over that same
 time-bucketed series, projecting `?periods=` future buckets; `?field=`
 targets a specific numeric field's per-bucket sum instead of record
 count). Both are gated by the same `read_roles` dependency as the plain
-`GET` list route. `crud.controllers.crud_stats` holds the shared query
+`GET` list route. `craftainer_tool_crud.controllers.crud_stats` holds the shared query
 parsing/field-classification/forecast logic both `build_json_router` and
 `build_xml_router` wrap (reusing `crud_query.field_specs`'s own
 `FieldKind` classification, narrowed to plain int/float fields for
@@ -149,7 +149,7 @@ numeric aggregates — see its own module docstring for why date/datetime
 fields, also `FieldKind.NUMBER` for filtering purposes, are excluded).
 `/predict`'s response always names its method `"linear_regression"`
 explicitly, so a client can't mistake it for a trained model — see
-`crud.views.stats.PredictionView`.
+`craftainer_tool_crud.views.stats.PredictionView`.
 
 **XML parity** (`build_xml_router`): every record-lifecycle/stats/predict
 route above has an XML-flavored sibling, following the same rendering
@@ -172,7 +172,7 @@ hand-written wrapping tags (`<numeric-fields>`, `<time-buckets>`, etc.) —
 change to `xml_codec.py`'s own flat-model constraint. `GET
 <prefix>/events` stays a **JSON-payload** SSE stream even under the XML
 router — SSE's `data:` line is a transport envelope, not a resource
-representation (see `crud.interfaces.base.EventSink`/`EventSource`'s own
+representation (see `craftainer_tool_crud.interfaces.base.EventSink`/`EventSource`'s own
 docstrings), so encoding it as XML would be new scope with no existing
 precedent.
 
@@ -231,7 +231,7 @@ body.
 ## Don't
 
 - Put persistence or conversion logic directly in a route body — that
-  belongs in `crud.interfaces`/`crud.repositories`; a route should stay
+  belongs in `craftainer_tool_crud.interfaces`/`craftainer_tool_crud.repositories`; a route should stay
   a thin translation between HTTP and a `CRUDInterface` call.
 - Add a resource's own router module here — resources live in
   `app.crud_1` so `controllers/` stays generic, reusable machinery only.

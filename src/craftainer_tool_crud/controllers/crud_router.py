@@ -1,7 +1,7 @@
 """Generic FastAPI router factories for a resource's CRUD endpoints.
 
 Parameterized by a resource's Pydantic views and an already-built CRUD
-dependency (crud.interfaces.base.CRUDLike) -- covers both a current version
+dependency (craftainer_tool_crud.interfaces.base.CRUDLike) -- covers both a current version
 (CRUDInterface) and a deprecated one (CompatCRUD) identically, since
 both satisfy CRUDLike structurally. Each factory builds its route
 functions internally as closures over its arguments: the generated
@@ -12,7 +12,7 @@ signature (every parameter, `-> APIRouter`) stays fully strict-typed,
 so a caller gets real type-checking on the call itself.
 
 Record addressing is a query parameter (`?id=`), not a path segment, on every
-factory here -- see crud.controllers.crud_actions for the shared "id present ->
+factory here -- see craftainer_tool_crud.controllers.crud_actions for the shared "id present ->
 single record; otherwise -> filtered list, or a bulk update/delete over the
 given filters" logic each factory's routes wrap in their own response format.
 """
@@ -33,24 +33,24 @@ from app.config import get_settings
 from app.rate_limit import limiter
 from app.web_components import render_crud_component_js, render_crud_form
 from app.xml_codec import from_xml, is_list_annotation, to_xml
-from crud.controllers import crud_stats
-from crud.controllers.crud_actions import (
+from craftainer_tool_crud.controllers import crud_stats
+from craftainer_tool_crud.controllers.crud_actions import (
     resolve_delete,
     resolve_list_or_get,
     resolve_restore,
     resolve_update,
 )
-from crud.controllers.crud_query import (
+from craftainer_tool_crud.controllers.crud_query import (
     FieldFilterInfo,
     describe_fields,
     parse_include_archived,
     parse_include_unpublished,
 )
-from crud.repositories.filtering import FilterClause, FilterOp, SortClause
-from crud.repositories.stats import TimeBucket
-from crud.views.bulk import BulkDeleteResult, BulkUpdateResult
-from crud.views.revision import RevisionView
-from crud.views.stats import (
+from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
+from craftainer_tool_crud.repositories.stats import TimeBucket
+from craftainer_tool_crud.views.bulk import BulkDeleteResult, BulkUpdateResult
+from craftainer_tool_crud.views.revision import RevisionView
+from craftainer_tool_crud.views.stats import (
     CategoricalValueCountView,
     LifecycleStatsView,
     NumericFieldStatView,
@@ -107,7 +107,7 @@ class _PredictionMetaXML(BaseModel):
     """Flat scalar sub-model for build_xml_router's hand-assembled `/predict` body.
 
     `field`/`bucket`/`method` are the only scalar (non-nested) fields of
-    crud.views.stats.PredictionView -- rendered as their own flat model via
+    craftainer_tool_crud.views.stats.PredictionView -- rendered as their own flat model via
     app.xml_codec.to_xml the same way a numeric-field/categorical-value/
     time-bucket row is (see build_xml_router's `/stats`/`/predict` routes).
     """
@@ -201,7 +201,7 @@ async def _resolve_predict(
     Shared by build_json_router's and build_xml_router's own `/predict` routes --
     only the rendering differs between them. Raises RequestValidationError (422)
     for an unrecognized `field`/`bucket` or fewer than 2 buckets of history --
-    see crud.controllers.crud_stats.forecast's own docstring for the latter.
+    see craftainer_tool_crud.controllers.crud_stats.forecast's own docstring for the latter.
     """
     bucket = crud_stats.parse_bucket(bucket_raw) or TimeBucket.DAY
     validated_field = crud_stats.parse_predict_field(schema, field)
@@ -237,7 +237,7 @@ def _stats_to_xml(view: ResourceStatsView) -> str:
 
     `view.lifecycle is None`'s branch below is `# pragma: no cover`: it's populated
     whenever the underlying model carries *any* record-lifecycle mixin (see
-    crud.repositories.memory/sqlalchemy's own `stats`), and Hero -- the only
+    craftainer_tool_crud.repositories.memory/sqlalchemy's own `stats`), and Hero -- the only
     resource wired up through the HTTP layer that tests/e2e exercises -- carries
     every one (Archivable, Draftable, Schedulable, Lockable; see
     app.models.hero.Hero), so `lifecycle` is never actually None through the real
@@ -311,7 +311,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
 
     `id`, when present as a query parameter, addresses a single record on the
     GET/PATCH/DELETE routes (404 if missing) -- otherwise GET lists (optionally
-    filtered/sorted per crud.controllers.crud_query) and PATCH/DELETE act in bulk
+    filtered/sorted per craftainer_tool_crud.controllers.crud_query) and PATCH/DELETE act in bulk
     over whatever filters are given, rejecting an empty filter set with no `id`
     (400) so an empty query string can never target every record by accident.
 
@@ -334,22 +334,23 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
 
     `revision_repository_dependency` + `resource` together add
     `GET <prefix>/revisions?id=`, a plain query against the shared Revision
-    table (see crud.models.revision) for that record's history, newest first --
+    table (see craftainer_tool_crud.models.revision) for that record's history, newest first --
     not routed through `crud_dependency` at all, since it reads a different
     model entirely.
 
     `event_source_dependency`, if given, adds `GET <prefix>/events`: a
     Server-Sent Events stream of this resource's create/update/update_many/
     delete/delete_many/restore/restore_many activity (see
-    crud.interfaces.base.EventSink/EventSource and
+    craftainer_tool_crud.interfaces.base.EventSink/EventSource and
     docs/adrs/0015-mqtt-for-crud-events.md). Gated by the same `read_roles`
     dependency as the plain `GET` list route above.
 
     `stats_enabled=True` adds `GET <prefix>/stats` (count/numeric/categorical/
-    time-series/lifecycle aggregates, see crud.controllers.crud_stats and
-    crud.views.stats.ResourceStatsView) and `GET <prefix>/predict` (an
+    time-series/lifecycle aggregates, see craftainer_tool_crud.controllers.crud_stats and
+    craftainer_tool_crud.views.stats.ResourceStatsView) and `GET <prefix>/predict` (an
     ordinary-least-squares trend forecast over the same time-bucketed series,
-    see crud.controllers.crud_stats.forecast and crud.views.stats.PredictionView)
+    see craftainer_tool_crud.controllers.crud_stats.forecast and
+    craftainer_tool_crud.views.stats.PredictionView)
     -- both gated by the same `read_roles` dependency as the plain `GET` list
     route.
     """
@@ -418,7 +419,8 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
                 raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
             _validate_publish_ready(record, create_schema)
             # `crud.get` above is unscoped for a resource using owner=OwnerScope(...,
-            # read_scoped=False) (see crud.interfaces.base.OwnerScope), but `crud.update`
+            # read_scoped=False) (see craftainer_tool_crud.interfaces.base.OwnerScope), but
+            # `crud.update`
             # always applies the owner filter -- so a caller who can see someone else's
             # record here can still get None back from update instead of the record
             # itself. Without this check, that None would be returned as this route's
@@ -595,7 +597,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
     docstring), and stats/predictions are naturally nested (per-field
     aggregates, a distribution, a time series). `GET <prefix>/events` stays a
     JSON-payload SSE stream even here -- SSE's `data:` line is a transport
-    envelope, not a resource representation (see crud.interfaces.base.
+    envelope, not a resource representation (see craftainer_tool_crud.interfaces.base.
     EventSink/EventSource's own docstrings), so it's exempt from this router's
     otherwise-XML rendering.
     """

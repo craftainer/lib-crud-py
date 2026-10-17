@@ -7,7 +7,7 @@ field gets equality/membership, and nothing else. `field_specs`/`describe_fields
 are the single source of truth for this per-field-type mapping: `parse_filters`/
 `parse_sort` use it to validate and parse incoming query strings, and
 `describe_fields` exposes the same information as JSON for a web UI to render
-filter controls from (see crud.controllers.crud_router's `/filters` route).
+filter controls from (see craftainer_tool_crud.controllers.crud_router's `/filters` route).
 
 Wire format: `field=value` is always an equality match; `field__min=`/
 `field__max=` express a numeric/date/datetime range; `field__in=a,b,c` is
@@ -20,7 +20,7 @@ generic over every field kind a Pydantic schema can have, but Hero (the only
 resource wired up through the HTTP layer that `tests/integration`/`tests/e2e`
 exercise) has no Enum, Literal, or plain-`date` field in its *read* view (it does
 now carry Optional and bool fields, from the record-lifecycle mixins -- see
-`crud.models.mixins` -- so those branches are exercised for real), so those
+`craftainer_tool_crud.models.mixins` -- so those branches are exercised for real), so those
 remaining branches can never run through the real HTTP stack.
 `tests/unit/controllers/test_crud_query.py` exercises every one of them
 directly against a standalone schema built for that purpose -- the pragma only
@@ -38,7 +38,7 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 from starlette.datastructures import QueryParams
 
-from crud.repositories.filtering import FilterClause, FilterOp, SortClause
+from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 
 _RESERVED_PARAMS = frozenset({"skip", "limit", "sort", "include_archived", "include_unpublished"})
 
@@ -48,8 +48,8 @@ _RESERVED_PARAMS = frozenset({"skip", "limit", "sort", "include_archived", "incl
 # 10 characters). Pattern *length* doesn't bound that -- backtracking cost is driven
 # by structure, not size -- so this cap is only a sanity limit against a genuinely
 # huge pattern; the actual ReDoS defense is a runtime budget enforced where the
-# pattern is evaluated (crud.repositories.memory's `_regex_matches` alarm timeout,
-# crud.repositories.sqlalchemy's per-transaction `statement_timeout`).
+# pattern is evaluated (craftainer_tool_crud.repositories.memory's `_regex_matches` alarm timeout,
+# craftainer_tool_crud.repositories.sqlalchemy's per-transaction `statement_timeout`).
 _MAX_REGEX_PATTERN_LENGTH = 200
 
 
@@ -184,7 +184,8 @@ def _cast_datetime(raw: str) -> datetime:
     """Parse an ISO datetime, normalizing a tz-aware value to naive UTC.
 
     Every timestamp this app stores is naive-but-conceptually-UTC (see
-    crud.models.base.IdentifiedBase / crud.views.base.IXDTFDatetime), so a
+    craftainer_tool_crud.models.base.IdentifiedBase /
+    craftainer_tool_crud.views.base.IXDTFDatetime), so a
     tz-aware filter value (e.g. "...+00:00" or "...Z") needs converting the
     same way before it can be compared against that column -- the DB driver
     otherwise rejects mixing naive and aware datetimes outright.
@@ -319,7 +320,8 @@ def _parse_bool_flag(params: QueryParams, key: str) -> bool:
 def parse_include_archived(params: QueryParams) -> bool:
     """Parse the `?include_archived=true` flag Archivable list/get routes accept.
 
-    See crud.repositories.sqlalchemy/crud.repositories.memory's default-exclusion
+    See craftainer_tool_crud.repositories.sqlalchemy/craftainer_tool_crud.repositories.memory's
+    default-exclusion
     logic for what this flag overrides.
     """
     return _parse_bool_flag(params, "include_archived")
@@ -328,7 +330,8 @@ def parse_include_archived(params: QueryParams) -> bool:
 def parse_include_unpublished(params: QueryParams) -> bool:
     """Parse the `?include_unpublished=true` flag Schedulable list/get routes accept.
 
-    See crud.repositories.sqlalchemy/crud.repositories.memory's default-exclusion
+    See craftainer_tool_crud.repositories.sqlalchemy/craftainer_tool_crud.repositories.memory's
+    default-exclusion
     logic for what this flag overrides.
     """
     return _parse_bool_flag(params, "include_unpublished")

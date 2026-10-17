@@ -46,7 +46,7 @@ class TimeBucketCount:
 
     `bucket_start` is a naive-UTC datetime, ISO-formatted, marking the start of
     the bucket (e.g. midnight UTC for a DAY bucket), matching how this app
-    stores every other timestamp (see crud.models.base.IdentifiedBase).
+    stores every other timestamp (see craftainer_tool_crud.models.base.IdentifiedBase).
     """
 
     bucket_start: str
@@ -55,11 +55,11 @@ class TimeBucketCount:
 
 @dataclass(frozen=True)
 class LifecycleStats:
-    """Record-lifecycle mixin breakdown -- see crud.models.mixins.
+    """Record-lifecycle mixin breakdown -- see craftainer_tool_crud.models.mixins.
 
     Each field is None when the bound model doesn't carry the corresponding
-    mixin (detected via `hasattr`, the same pattern crud.repositories.sqlalchemy/
-    crud.repositories.memory already use elsewhere) -- a model with no
+    mixin (detected via `hasattr`, the same pattern craftainer_tool_crud.repositories.sqlalchemy/
+    craftainer_tool_crud.repositories.memory already use elsewhere) -- a model with no
     record-lifecycle mixins at all gets `LifecycleStats()`, all fields None.
     """
 
