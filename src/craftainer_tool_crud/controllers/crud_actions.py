@@ -15,7 +15,7 @@ from fastapi import HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 
-from app.config import get_settings
+from craftainer_tool_crud.config import get_config
 from craftainer_tool_crud.controllers.crud_query import (
     parse_filters,
     parse_include_archived,
@@ -27,7 +27,6 @@ from craftainer_tool_crud.repositories.base import RecordLockedError
 from craftainer_tool_crud.repositories.filtering import FilterClause
 from craftainer_tool_crud.views.bulk import BulkDeleteResult, BulkUpdateResult
 
-settings = get_settings()
 logger = logging.getLogger(__name__)
 
 _NO_TARGET_ERROR = [
@@ -66,12 +65,13 @@ async def _check_bulk_action_size(
     against the shared e2e stack, too slow/heavy for what tests/unit/controllers/
     test_crud_router.py already covers directly (with the cap monkeypatched low).
     """
+    max_matched = get_config().bulk_action_max_matched
     matched = await crud.count(filters=filters, include_archived=include_archived)
-    if matched > settings.bulk_action_max_matched:  # pragma: no cover -- see docstring
+    if matched > max_matched:  # pragma: no cover -- see docstring
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             f"Bulk action would affect {matched} records, over the "
-            f"{settings.bulk_action_max_matched}-record limit -- narrow the filters",
+            f"{max_matched}-record limit -- narrow the filters",
         )
 
 

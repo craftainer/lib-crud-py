@@ -19,20 +19,16 @@ given filters" logic each factory's routes wrap in their own response format.
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from datetime import datetime
 from typing import Annotated, Any
 
-from defusedxml.common import DefusedXmlException
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, ValidationError
 
-from app.config import get_settings
-from app.rate_limit import limiter
-from app.web_components import render_crud_component_js, render_crud_form
-from app.xml_codec import from_xml, is_list_annotation, to_xml
+from craftainer_tool_crud.config import get_config
 from craftainer_tool_crud.controllers import crud_stats
 from craftainer_tool_crud.controllers.crud_actions import (
     resolve_delete,
@@ -59,8 +55,18 @@ from craftainer_tool_crud.views.stats import (
     SeriesPointView,
     TimeBucketCountView,
 )
+from craftainer_tool_crud.web_components import render_crud_component_js, render_crud_form
+from craftainer_tool_crud.xml_codec import from_xml, is_list_annotation, to_xml
 
-settings = get_settings()
+# A route decorator the host supplies for bulk actions (e.g. slowapi's `limiter.limit(...)`),
+# so this package doesn't depend on any rate-limiting library. None means unlimited.
+RateLimit = Callable[[Callable[..., Any]], Callable[..., Any]]
+
+
+def _rate_limited(bulk_rate_limit: RateLimit | None) -> RateLimit:
+    """Return `bulk_rate_limit`, or an identity decorator when none was given."""
+    return bulk_rate_limit if bulk_rate_limit is not None else lambda func: func
+
 
 # Unbounded `?limit=` would let a caller pull an entire table in one response --
 # cap it the same way skip=0 already bounds the low end.
@@ -108,7 +114,7 @@ class _PredictionMetaXML(BaseModel):
 
     `field`/`bucket`/`method` are the only scalar (non-nested) fields of
     craftainer_tool_crud.views.stats.PredictionView -- rendered as their own flat model via
-    app.xml_codec.to_xml the same way a numeric-field/categorical-value/
+    craftainer_tool_crud.xml_codec.to_xml the same way a numeric-field/categorical-value/
     time-bucket row is (see build_xml_router's `/stats`/`/predict` routes).
     """
 
@@ -281,6 +287,8 @@ def _parse_xml_body[ModelT: BaseModel](body: bytes, schema: type[ModelT]) -> Mod
     without this, that exception would otherwise reach problem_details.py's generic
     500 handler instead of being reported as the client error it is.
     """
+    from defusedxml.common import DefusedXmlException  # noqa: PLC0415 -- optional `[xml]` extra
+
     try:
         return from_xml(body, schema)
     except DefusedXmlException as exc:
@@ -306,6 +314,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     resource: str | None = None,
     event_source_dependency: Any = None,  # Annotated[EventSource, Depends(...)]
     stats_enabled: bool = False,
+    bulk_rate_limit: RateLimit | None = None,
 ) -> APIRouter:
     """Build the standard list/create/get/update/delete JSON router for one resource.
 
@@ -355,6 +364,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     route.
     """
     router = APIRouter(prefix=prefix, tags=list(tags), dependencies=list(router_dependencies))
+    rate_limit = _rate_limited(bulk_rate_limit)
     not_found = f"{resource_label} not found"
 
     @router.get("", dependencies=[read_roles])
@@ -378,7 +388,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
         return describe_fields(schema)
 
     @router.patch("", dependencies=[write_roles])
-    @limiter.limit(settings.rate_limit_bulk_action)
+    @rate_limit
     async def update_records(
         crud: crud_dependency,
         request: Request,
@@ -388,7 +398,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
         return await resolve_update(crud, schema, request, id=id, data=record, not_found=not_found)  # type: ignore[no-any-return]
 
     @router.delete("", dependencies=[delete_roles], response_model=None)
-    @limiter.limit(settings.rate_limit_bulk_action)
+    @rate_limit
     async def delete_records(
         crud: crud_dependency,
         request: Request,
@@ -434,7 +444,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     if archivable:
 
         @router.post("/restore", dependencies=[write_roles])
-        @limiter.limit(settings.rate_limit_bulk_action)
+        @rate_limit
         async def restore_records(
             crud: crud_dependency,
             request: Request,
@@ -543,7 +553,7 @@ async def _sse_events(
                 return
             if pending is None:
                 pending = asyncio.ensure_future(iterator.__anext__())
-            done, _ = await asyncio.wait({pending}, timeout=settings.sse_keepalive_seconds)
+            done, _ = await asyncio.wait({pending}, timeout=get_config().sse_keepalive_seconds)
             if not done:
                 yield ": keep-alive\n\n"
                 continue
@@ -586,6 +596,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
     resource: str | None = None,
     event_source_dependency: Any = None,  # Annotated[EventSource, Depends(...)]
     stats_enabled: bool = False,
+    bulk_rate_limit: RateLimit | None = None,
 ) -> APIRouter:
     """Build the XML-flavored sibling of build_json_router's routes.
 
@@ -593,7 +604,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
     same opt-in params) restore/draft/publish/revisions/events/stats/predict.
     `GET <prefix>/stats`/`GET <prefix>/predict` are hand-assembled nested XML
     (see `_stats_to_xml`/`_prediction_to_xml`) rather than a single `to_xml`
-    call -- app.xml_codec.to_xml only supports a flat model (see its own module
+    call -- craftainer_tool_crud.xml_codec.to_xml only supports a flat model (see its own module
     docstring), and stats/predictions are naturally nested (per-field
     aggregates, a distribution, a time series). `GET <prefix>/events` stays a
     JSON-payload SSE stream even here -- SSE's `data:` line is a transport
@@ -602,6 +613,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
     otherwise-XML rendering.
     """
     router = APIRouter(prefix=prefix, tags=list(tags), dependencies=list(router_dependencies))
+    rate_limit = _rate_limited(bulk_rate_limit)
     not_found = f"{resource_label} not found"
     xml_media_type = "application/xml"
 
@@ -639,7 +651,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
         )
 
     @router.patch("", dependencies=[write_roles])
-    @limiter.limit(settings.rate_limit_bulk_action)
+    @rate_limit
     async def update_records_xml(
         crud: crud_dependency,
         request: Request,
@@ -657,7 +669,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
         return _with_dependency_headers(response, Response(content=body, media_type=xml_media_type))
 
     @router.delete("", dependencies=[delete_roles])
-    @limiter.limit(settings.rate_limit_bulk_action)
+    @rate_limit
     async def delete_records_xml(
         crud: crud_dependency,
         request: Request,
@@ -731,7 +743,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
     if archivable:
 
         @router.post("/restore", dependencies=[write_roles])
-        @limiter.limit(settings.rate_limit_bulk_action)
+        @rate_limit
         async def restore_records_xml(
             crud: crud_dependency,
             request: Request,
@@ -840,7 +852,7 @@ def build_web_router[CreateT: BaseModel](
     same-named params -- this router adds no new FastAPI routes for them (the
     sibling JSON router already serves `/restore`/`/draft`/`/publish`/
     `/revisions`/`/events`/`/stats`/`/predict`, see build_json_router); they're
-    only used here to decide which UI app.web_components.render_crud_component_js
+    only used here to decide which UI craftainer_tool_crud.web_components.render_crud_component_js
     generates (an Archive/Restore action, a Save-as-draft/Publish pair, a History
     panel, a live-events subscription, a Stats/Predict panel), calling those
     JSON routes directly, same as every other action already does.
@@ -850,7 +862,7 @@ def build_web_router[CreateT: BaseModel](
     `is_list_annotation`, rather than passed separately -- one less value for a
     caller to keep in sync with its own view module.
 
-    The rendered web component (`app.web_components.render_crud_component_js`)
+    The rendered web component (`craftainer_tool_crud.web_components.render_crud_component_js`)
     talks directly to `api_base` -- the sibling build_json_router's own prefix --
     for every list/create/update/delete/filters-metadata call, so this router
     itself only ever serves `/form` and `/components.js`; filtering/sorting/bulk
@@ -976,6 +988,7 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
     revision_repository_dependency: Any = None,  # Annotated[Repository[Revision], Depends(...)]
     event_source_dependency: Any = None,  # Annotated[EventSource, Depends(...)]
     stats_enabled: bool = False,
+    bulk_rate_limit: RateLimit | None = None,
 ) -> APIRouter:
     """Compose build_json_router/build_xml_router/build_web_router into one resource-version router.
 
@@ -1002,6 +1015,9 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
     factories identically -- draft/publish/restore/revisions/events/stats/
     predict are first-class across JSON/XML/web, not JSON-only (see
     build_json_router's/build_xml_router's/build_web_router's own docstrings).
+
+    `bulk_rate_limit` is an optional route decorator (e.g. `limiter.limit("20/minute")`)
+    applied to the JSON and XML bulk-action routes; None leaves them unlimited.
     """
     full_prefix = prefix if api_prefix is None else api_prefix
     router = APIRouter(prefix=prefix, tags=list(tags), dependencies=list(router_dependencies))
@@ -1023,6 +1039,7 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
             resource=resource,
             event_source_dependency=event_source_dependency,
             stats_enabled=stats_enabled,
+            bulk_rate_limit=bulk_rate_limit,
         ),
         prefix="/json",
     )
@@ -1046,6 +1063,7 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
             resource=resource,
             event_source_dependency=event_source_dependency,
             stats_enabled=stats_enabled,
+            bulk_rate_limit=bulk_rate_limit,
         ),
         prefix="/xml",
     )

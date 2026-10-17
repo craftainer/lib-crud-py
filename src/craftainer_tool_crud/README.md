@@ -35,15 +35,10 @@ README.md`'s own "Layering" section. `interfaces/base.py` imports
 README.md`'s "Example CRUD resource: Hero") — a third-party dependency,
 not another `crud/` module, so it doesn't change this layer order.
 
-`controllers/crud_router.py` also imports several of `app/`'s own flat
-modules (`app.config`, `app.rate_limit`, `app.web_components`,
-`app.xml_codec`) — those sit below every resource-specific `app/`
-module in `app/`'s own layering (see `../app/README.md`'s "Layering"),
-so this doesn't create an import cycle between the two packages: `app`'s
-resource-specific modules import from `crud`, and `craftainer_tool_crud.controllers`
-imports back only from `app`'s lowest, resource-agnostic flat modules,
-never from `app.models`/`app.views`/`app.crud_1` or anything built on
-top of them.
+This package imports nothing from `app` or `craftainer_tool_observability`;
+the `"crud never imports app"` import-linter contract enforces it. Its
+generic `xml_codec.py` and `web_components.py` live at the package top
+level (below `controllers`, which uses them), not in `app`.
 
 ```mermaid
 graph LR
@@ -52,6 +47,32 @@ graph LR
 
 An arrow means "may import from" — each module may depend on anything
 to its left, never anything to its right.
+
+## Host integration
+
+The host application owns settings, the database engine and rate limiting;
+this package receives them:
+
+- `config.py` — `CrudConfig` (`use_memory`, `bulk_action_max_matched`,
+  `sse_keepalive_seconds`, `mqtt: MQTTConfig`) and `configure(config,
+  session_factory)`. Call it once at startup, before the first request:
+  `models.base.get_db`/`DBSession` open sessions from the injected
+  `async_sessionmaker` (`get_session_factory()` raises if none was
+  supplied), and providers/routes read `get_config()` at call time. No
+  module here creates an engine or reads environment settings.
+- Rate limiting: the router factories (`build_resource_router`,
+  `build_json_router`, `build_xml_router`) take an optional
+  `bulk_rate_limit` route decorator (e.g. `limiter.limit("20/minute")`)
+  for the bulk-action routes; `None` means unlimited. This package does
+  not depend on `slowapi`.
+- Migrations stay app-owned: the app's Alembic setup targets
+  `models.base.Base.metadata`, so a release of this package that changes
+  its models (`revision`, mixins) needs a new app-side migration
+  ([NFR-0019](../../docs/nfrs/NFR-0019-migrations-immutable-once-applied.md)).
+- Intended extras once extracted: `[mqtt]` (`aiomqtt`, imported only inside
+  `MQTTEventSink`/`MQTTEventSource`) and `[xml]` (`defusedxml`, imported only
+  inside `xml_codec.from_xml` and the router's XML-body parsing). In this
+  repository both still sit in `[project] dependencies`.
 
 ## Do
 
@@ -65,6 +86,6 @@ to its left, never anything to its right.
 - Add resource-specific code anywhere in this package — a resource's
   own model/view/router belongs in `app/` instead, built on top of the
   generic pieces here.
-- Import from `app.models`, `app.views`, `app.crud_1`,
-  `app.health_checks`, or any other resource-specific `app/` module —
-  see "Layering" above.
+- Import anything from `app` (e.g. `app.models`, `app.config`,
+  `app.rate_limit`) — pass what you need in through `config.configure(...)`
+  or a factory parameter instead; see "Host integration" above.

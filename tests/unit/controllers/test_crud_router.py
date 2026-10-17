@@ -17,7 +17,6 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ConfigDict
 
-from craftainer_tool_crud.controllers import crud_actions
 from craftainer_tool_crud.controllers import crud_router as crud_router_module
 from craftainer_tool_crud.controllers.crud_router import (
     build_json_router,
@@ -32,6 +31,7 @@ from craftainer_tool_crud.repositories.stats import (
     TimeBucket,
     TimeBucketCount,
 )
+from tests.unit.craftainer_tool_crud.conftest import CrudConfigOverride
 
 
 @dataclass
@@ -429,13 +429,15 @@ def test_json_router_bulk_delete_via_filters() -> None:
         del app.dependency_overrides[get_gadget_crud]
 
 
-def test_json_router_bulk_update_rejected_over_row_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_json_router_bulk_update_rejected_over_row_cap(
+    override_crud_config: CrudConfigOverride,
+) -> None:
     """A bulk PATCH matching more records than bulk_action_max_matched is refused, untouched."""
     repository = _FakeGadgetRepository()
     app.dependency_overrides[get_gadget_crud] = lambda: CRUDInterface(
         schema=_Gadget, repository=repository
     )
-    monkeypatch.setattr(crud_actions.settings, "bulk_action_max_matched", 1)
+    override_crud_config(bulk_action_max_matched=1)
     try:
         client.post("/gadgets", json={"name": "apple", "tags": []})
         client.post("/gadgets", json={"name": "apricot", "tags": []})
@@ -451,13 +453,15 @@ def test_json_router_bulk_update_rejected_over_row_cap(monkeypatch: pytest.Monke
         del app.dependency_overrides[get_gadget_crud]
 
 
-def test_json_router_bulk_delete_rejected_over_row_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_json_router_bulk_delete_rejected_over_row_cap(
+    override_crud_config: CrudConfigOverride,
+) -> None:
     """A bulk DELETE matching more records than bulk_action_max_matched is refused, untouched."""
     repository = _FakeGadgetRepository()
     app.dependency_overrides[get_gadget_crud] = lambda: CRUDInterface(
         schema=_Gadget, repository=repository
     )
-    monkeypatch.setattr(crud_actions.settings, "bulk_action_max_matched", 1)
+    override_crud_config(bulk_action_max_matched=1)
     try:
         client.post("/gadgets", json={"name": "apple", "tags": []})
         client.post("/gadgets", json={"name": "apricot", "tags": []})
@@ -863,9 +867,11 @@ async def test_sse_events_yields_subscriber_id_frame_then_each_event() -> None:
     ]
 
 
-async def test_sse_events_yields_keep_alive_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_sse_events_yields_keep_alive_on_timeout(
+    override_crud_config: CrudConfigOverride,
+) -> None:
     """A keep-alive comment is yielded once no event arrives within sse_keepalive_seconds."""
-    monkeypatch.setattr(crud_router_module.settings, "sse_keepalive_seconds", 0.01)
+    override_crud_config(sse_keepalive_seconds=0.01)
     request = cast(Request, _StubRequest(disconnect_after_calls=1))  # disconnect after keep-alive
     events = _no_events_forthcoming()
     frames = [frame async for frame in crud_router_module._sse_events(request, "sub-1", events)]
@@ -873,13 +879,13 @@ async def test_sse_events_yields_keep_alive_on_timeout(monkeypatch: pytest.Monke
 
 
 async def test_sse_events_reuses_the_same_pending_task_across_keep_alives(
-    monkeypatch: pytest.MonkeyPatch,
+    override_crud_config: CrudConfigOverride,
 ) -> None:
     """A second keep-alive still waits on the *same* pending `__anext__()` task rather
     than starting a new one -- see _sse_events's own docstring for why a fresh one per
     keep-alive would silently end the stream instead.
     """
-    monkeypatch.setattr(crud_router_module.settings, "sse_keepalive_seconds", 0.01)
+    override_crud_config(sse_keepalive_seconds=0.01)
     request = cast(Request, _StubRequest(disconnect_after_calls=2))  # two keep-alives, then gone
     events = _no_events_forthcoming()
     frames = [frame async for frame in crud_router_module._sse_events(request, "sub-1", events)]

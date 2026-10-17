@@ -9,7 +9,7 @@ base.CRUDInterface builds one of via `from_attributes`.
 Flat, list-of-item sub-models (`NumericFieldStatView`/`CategoricalValueCountView`/
 `TimeBucketCountView`) rather than a dict-keyed-by-field-name shape -- this is
 what lets craftainer_tool_crud.controllers.crud_router's XML router render each row as its own
-flat model via app.xml_codec.to_xml (which only supports scalar/flat-list
+flat model via craftainer_tool_crud.xml_codec.to_xml (which only supports scalar/flat-list
 fields, see its own module docstring) and hand-assemble the wrapping tags, the
 same pattern already used for a list of records.
 """

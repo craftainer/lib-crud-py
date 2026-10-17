@@ -4,11 +4,10 @@ MODE-aware selection.
 
 from typing import cast
 
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.hero import Hero as HeroModel
-from craftainer_tool_crud.interfaces import dependency as dependency_module
+from craftainer_tool_crud.interfaces import dependency
 from craftainer_tool_crud.interfaces.base import InMemoryEventSink, MQTTEventSink, MQTTEventSource
 from craftainer_tool_crud.interfaces.dependency import (
     build_event_sink_provider,
@@ -17,13 +16,14 @@ from craftainer_tool_crud.interfaces.dependency import (
 )
 from craftainer_tool_crud.repositories.memory import InMemoryRepository
 from craftainer_tool_crud.repositories.sqlalchemy import SQLAlchemyRepository
+from tests.unit.craftainer_tool_crud.conftest import CrudConfigOverride
 
 
 def test_mock_mode_shares_one_repository_instance_across_calls(
-    monkeypatch: pytest.MonkeyPatch,
+    override_crud_config: CrudConfigOverride,
 ) -> None:
     """Under MODE=mock, every call returns the same in-memory repository instance."""
-    monkeypatch.setattr(dependency_module.settings, "mode", "mock")
+    override_crud_config(use_memory=True)
     provider = build_repository_provider(HeroModel)
     session = cast(AsyncSession, object())
 
@@ -35,10 +35,10 @@ def test_mock_mode_shares_one_repository_instance_across_calls(
 
 
 def test_non_mock_mode_returns_a_fresh_sqlalchemy_repository_per_call(
-    monkeypatch: pytest.MonkeyPatch,
+    override_crud_config: CrudConfigOverride,
 ) -> None:
     """Outside MODE=mock, each call returns a new SQLAlchemyRepository bound to the session."""
-    monkeypatch.setattr(dependency_module.settings, "mode", "dev")
+    override_crud_config(use_memory=False)
     provider = build_repository_provider(HeroModel)
     session = cast(AsyncSession, object())
 
@@ -51,7 +51,7 @@ def test_non_mock_mode_returns_a_fresh_sqlalchemy_repository_per_call(
 
 
 def test_mock_mode_event_sink_and_source_share_one_instance_per_resource(
-    monkeypatch: pytest.MonkeyPatch,
+    override_crud_config: CrudConfigOverride,
 ) -> None:
     """Under MODE=mock, a resource's sink and source providers return the same instance.
 
@@ -59,8 +59,8 @@ def test_mock_mode_event_sink_and_source_share_one_instance_per_resource(
     side must reach the subscribe()-registered queues on the source side -- see
     craftainer_tool_crud.interfaces.dependency's own `_mock_event_sink_for` docstring.
     """
-    monkeypatch.setattr(dependency_module.settings, "mode", "mock")
-    dependency_module._mock_event_sinks.clear()
+    override_crud_config(use_memory=True)
+    dependency._mock_event_sinks.clear()
     sink = build_event_sink_provider("widget")()
     source = build_event_source_provider("widget")()
 
@@ -70,13 +70,12 @@ def test_mock_mode_event_sink_and_source_share_one_instance_per_resource(
 
 
 def test_non_mock_mode_returns_mqtt_backed_sink_and_source(
-    monkeypatch: pytest.MonkeyPatch,
+    override_crud_config: CrudConfigOverride,
 ) -> None:
     """Outside MODE=mock, the sink/source providers return the real MQTT-backed adapters."""
-    monkeypatch.setattr(dependency_module.settings, "mode", "dev")
-    monkeypatch.setattr(dependency_module.settings, "mqtt_host", "mqtt-test-host")
-    monkeypatch.setattr(dependency_module.settings, "mqtt_port", 18830)
-    monkeypatch.setattr(dependency_module.settings, "mqtt_keepalive_seconds", 42)
+    override_crud_config(
+        use_memory=False, mqtt={"host": "mqtt-test-host", "port": 18830, "keepalive_seconds": 42}
+    )
 
     sink = build_event_sink_provider("widget")()
     source = build_event_source_provider("widget")()

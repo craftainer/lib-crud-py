@@ -3,10 +3,11 @@ resource's CRUD dependency.
 """
 
 from collections.abc import Callable
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
+from craftainer_tool_crud.config import MQTTConfig, get_config
 from craftainer_tool_crud.interfaces.base import (
     EventSink,
     EventSource,
@@ -18,8 +19,6 @@ from craftainer_tool_crud.models.base import IdentifiedBase
 from craftainer_tool_crud.repositories.base import Repository
 from craftainer_tool_crud.repositories.memory import InMemoryRepository
 from craftainer_tool_crud.repositories.sqlalchemy import SQLAlchemyRepository
-
-settings = get_settings()
 
 # One InMemoryEventSink per resource, built lazily and shared by both
 # build_event_sink_provider and build_event_source_provider for that resource --
@@ -40,36 +39,46 @@ def _mock_event_sink_for(resource: str) -> InMemoryEventSink:
     return _mock_event_sinks[resource]
 
 
+def _mqtt_kwargs(mqtt: MQTTConfig, resource: str) -> dict[str, Any]:
+    """Map an MQTTConfig onto MQTTEventSink/MQTTEventSource's shared constructor kwargs."""
+    return {
+        "hostname": mqtt.host,
+        "port": mqtt.port,
+        "resource": resource,
+        "keepalive": mqtt.keepalive_seconds,
+        "username": mqtt.username,
+        "password": mqtt.password,
+        "use_tls": mqtt.use_tls,
+    }
+
+
 def build_repository_provider[ModelT: IdentifiedBase](
     model: type[ModelT],
 ) -> Callable[[AsyncSession], Repository[ModelT]]:
-    """Return a per-request Repository[ModelT] provider: shared in-memory under
-    MODE=mock, a fresh SQLAlchemyRepository bound to the request's session otherwise.
+    """Return a per-request Repository[ModelT] provider: shared in-memory in
+    mock mode (CrudConfig.use_memory), a fresh SQLAlchemyRepository bound to the request's
+    session otherwise.
     """
     mock_repository: Repository[ModelT] = InMemoryRepository(model)
 
     def provider(session: AsyncSession) -> Repository[ModelT]:
-        return mock_repository if settings.mode == "mock" else SQLAlchemyRepository(session, model)
+        return mock_repository if get_config().use_memory else SQLAlchemyRepository(session, model)
 
     return provider
 
 
 def build_event_sink_provider(resource: str) -> Callable[[], EventSink]:
-    """Return an EventSink provider for `resource`: the shared InMemoryEventSink under
-    MODE=mock, a fresh MQTTEventSink (stateless -- see its own docstring) otherwise.
+    """Return an EventSink provider for `resource`: the shared InMemoryEventSink in
+    mock mode (CrudConfig.use_memory), a fresh MQTTEventSink (stateless -- see its own
+    docstring) otherwise.
     """
 
     def provider() -> EventSink:
-        if settings.mode == "mock":
+        config = get_config()
+        if config.use_memory:
             return _mock_event_sink_for(resource)
         return MQTTEventSink(
-            hostname=settings.mqtt_host,
-            port=settings.mqtt_port,
-            resource=resource,
-            keepalive=settings.mqtt_keepalive_seconds,
-            username=settings.mqtt_username,
-            password=settings.mqtt_password,
-            use_tls=settings.mqtt_use_tls,
+            **_mqtt_kwargs(config.mqtt, resource),
         )
 
     return provider
@@ -78,20 +87,15 @@ def build_event_sink_provider(resource: str) -> Callable[[], EventSink]:
 def build_event_source_provider(resource: str) -> Callable[[], EventSource]:
     """Return an EventSource provider for `resource`, paired with build_event_sink_provider's
     sink for the same resource -- see `_mock_event_sink_for`'s own docstring for why
-    MODE=mock needs the two to share one instance.
+    mock mode (CrudConfig.use_memory) needs the two to share one instance.
     """
 
     def provider() -> EventSource:
-        if settings.mode == "mock":
+        config = get_config()
+        if config.use_memory:
             return _mock_event_sink_for(resource)
         return MQTTEventSource(
-            hostname=settings.mqtt_host,
-            port=settings.mqtt_port,
-            resource=resource,
-            keepalive=settings.mqtt_keepalive_seconds,
-            username=settings.mqtt_username,
-            password=settings.mqtt_password,
-            use_tls=settings.mqtt_use_tls,
+            **_mqtt_kwargs(config.mqtt, resource),
         )
 
     return provider

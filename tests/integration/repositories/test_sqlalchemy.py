@@ -7,8 +7,10 @@ import pytest
 from sqlalchemy import Integer, Table
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.db import engine
+from app.db import session_factory as async_session_factory
 from app.models.hero import Hero
-from craftainer_tool_crud.models.base import IdentifiedBase, async_session_factory, engine
+from craftainer_tool_crud.models.base import IdentifiedBase
 from craftainer_tool_crud.repositories.base import RecordLockedError
 from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_tool_crud.repositories.sqlalchemy import SQLAlchemyRepository

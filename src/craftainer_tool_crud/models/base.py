@@ -1,4 +1,4 @@
-"""Declarative base, async engine/session, and the FastAPI DB dependency."""
+"""Declarative base and the FastAPI DB dependency (the session factory is injected)."""
 
 from collections.abc import AsyncGenerator
 from datetime import datetime
@@ -6,24 +6,10 @@ from typing import Annotated
 
 from fastapi import Depends
 from sqlalchemy import func
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.pool import NullPool
 
-from app.config import get_settings
-
-settings = get_settings()
-
-# NullPool: an asyncpg connection is tied to the event loop it was opened on, and
-# pooling would hand one from a closed-out loop to a new one -- fine for the app's
-# own single long-lived event loop, but tests/integration mixes pytest-asyncio's
-# loop with TestClient's own background-thread loop, which pooling can't survive
-# ("cannot perform operation: another operation is in progress"). A fresh
-# connection per checkout sidesteps that everywhere, at the cost of connection
-# reuse -- acceptable for this template's traffic; front it with PgBouncer instead
-# of re-enabling pooling here if that ever matters.
-engine = create_async_engine(settings.database_url, poolclass=NullPool)
-async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
+from craftainer_tool_crud.config import get_session_factory
 
 
 class Base(DeclarativeBase):
@@ -51,7 +37,7 @@ class IdentifiedBase(Base):
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
     """FastAPI dependency yielding a request-scoped AsyncSession, committed on success."""
-    async with async_session_factory() as session:
+    async with get_session_factory()() as session:
         yield session
         await session.commit()
 

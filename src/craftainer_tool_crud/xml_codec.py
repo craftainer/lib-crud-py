@@ -12,7 +12,6 @@ DoS attacks.
 from typing import Annotated, Union, get_args, get_origin
 from xml.etree.ElementTree import Element, SubElement, tostring
 
-from defusedxml.ElementTree import fromstring
 from pydantic import BaseModel
 
 
@@ -54,6 +53,8 @@ def from_xml[ModelT: BaseModel](body: bytes, schema: type[ModelT]) -> ModelT:
     """Parse an XML document (repeated elements group into a list field, single
     elements stay scalar) into the given model.
     """
+    from defusedxml.ElementTree import fromstring  # noqa: PLC0415 -- optional `[xml]` extra
+
     root = fromstring(body)
     grouped: dict[str, list[str | None]] = {}
     for child in root:

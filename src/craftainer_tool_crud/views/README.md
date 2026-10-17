@@ -21,7 +21,7 @@ Generic Pydantic view bases and response shapes a resource's own views
   `ResourceStatsView`/`PredictionView`), flat list-of-item sub-models
   rather than a dict-keyed-by-field-name shape — this is what lets
   `craftainer_tool_crud.controllers.crud_router`'s XML router render each row as its own
-  flat model via `app.xml_codec.to_xml` (which only supports scalar/
+  flat model via `craftainer_tool_crud.xml_codec.to_xml` (which only supports scalar/
   flat-list fields) and hand-assemble the wrapping tags, the same
   pattern already used for a list of records.
 

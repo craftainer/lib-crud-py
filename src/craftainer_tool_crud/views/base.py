@@ -51,7 +51,7 @@ object rather than this IXDTF string -- required since craftainer_tool_crud.inte
 CRUDInterface.create/update/update_many feed a view's own `.model_dump(
 exclude_unset=True)` straight into a repository write, which needs a real
 `datetime` to compare/store, not a string. `.model_dump(mode="json")` (used by
-FastAPI's own response encoding, and explicitly by app.xml_codec.to_xml/app.
+FastAPI's own response encoding, and explicitly by craftainer_tool_crud.xml_codec.to_xml/app.
 interfaces.base's revision-snapshot dump) is unaffected -- it still serializes
 through `_to_ixdtf` either way.
 """

@@ -78,7 +78,7 @@ factories; each wraps the same calls in its own response format (JSON body
 vs. an XML-rendered `Response`). Before a bulk update/delete actually runs,
 `crud_actions.py` counts how many records the filters match
 (`CRUDLike.count`) and refuses the action (400) above
-`app.config.Settings.bulk_action_max_matched` (default 1000) — a
+`CrudConfig.bulk_action_max_matched` (default 1000, set by the host from `Settings`) — a
 technically-non-empty but always-true filter (e.g. `id__gte=0`) would
 otherwise still match every row. A bulk action that does run is logged
 (`INFO`, actor/path/filters/ids) for auditing, and is itself rate-limited —
@@ -87,7 +87,7 @@ see `../../app/README.md`'s "Rate limiting". A bulk action's response
 count and the ids affected, not the full records. `build_json_router` also
 serves `GET <prefix>/filters`, the same per-field-type introspection
 `crud_query.py` uses to parse, as JSON — the `<resource>-list>` web component
-(`app.web_components`) fetches this once to render filter/sort/bulk controls
+(`craftainer_tool_crud.web_components`) fetches this once to render filter/sort/bulk controls
 generically, without either side hardcoding a resource's fields.
 
 **Record-lifecycle routes** (`build_json_router`/`build_xml_router`/
@@ -162,7 +162,7 @@ param, no body; `GET <prefix>/revisions?id=` renders `<revisions>`
 wrapping repeated `<revision>` elements, the same pattern
 `list_records_xml` already uses for a list of records. `GET
 <prefix>/stats`/`GET <prefix>/predict` are **hand-assembled** nested XML,
-not a single `to_xml` call — `app.xml_codec.to_xml` only supports a flat
+not a single `to_xml` call — `craftainer_tool_crud.xml_codec.to_xml` only supports a flat
 model (see its own module docstring), and stats/predictions are naturally
 nested (per-field aggregates, a distribution, a time series). The route
 renders each numeric-field/categorical-value/time-bucket/prediction-point
@@ -178,7 +178,7 @@ precedent.
 
 **Web UI parity** (`build_web_router`): the web router itself gains no
 new FastAPI routes for any of this — its generated JS
-(`app.web_components.render_crud_component_js`) already talks directly to
+(`craftainer_tool_crud.web_components.render_crud_component_js`) already talks directly to
 the sibling JSON router for every action, so covering the routes above
 here just means the generated `<{resource}-list>`/`<{resource}-form>`
 elements grow more UI, gated by the same opt-in params: an Archive/Restore

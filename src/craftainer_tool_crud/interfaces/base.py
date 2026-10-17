@@ -28,14 +28,16 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-import aiomqtt
 from pydantic import BaseModel
 
 from craftainer_tool_crud.repositories.base import Repository
 from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_tool_crud.repositories.stats import ResourceStats, TimeBucket
+
+if TYPE_CHECKING:
+    import aiomqtt  # only imported at runtime inside the MQTT classes (future `[mqtt]` extra)
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +214,8 @@ class MQTTEventSink:
         envelope = _event_envelope(
             resource=resource, record_id=record_id, action=action, snapshot=snapshot
         )
+        import aiomqtt  # noqa: PLC0415 -- optional `[mqtt]` extra, only needed here
+
         async with aiomqtt.Client(
             hostname=self.hostname,
             port=self.port,
@@ -268,6 +272,8 @@ class MQTTEventSource:
         was simply dropped, never replayed on reconnect.
         """
         resolved = subscriber_id or str(uuid.uuid4())
+        import aiomqtt  # noqa: PLC0415 -- optional `[mqtt]` extra, only needed here
+
         client = aiomqtt.Client(
             hostname=self.hostname,
             port=self.port,
