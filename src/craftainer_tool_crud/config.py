@@ -57,8 +57,13 @@ def get_config() -> CrudConfig:
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
-    """Return the installed session factory, or raise if `configure` hasn't supplied one."""
-    if _session_factory is None:
+    """Return the installed session factory, or raise if `configure` hasn't supplied one.
+
+    The raise is `# pragma: no cover` for tests/e2e specifically: its one live process
+    is always configured, so the branch can never run there --
+    tests/unit/craftainer_tool_crud/test_config.py covers it directly.
+    """
+    if _session_factory is None:  # pragma: no cover -- see docstring
         msg = "craftainer_tool_crud.config.configure(...) must be called with a session factory"
         raise RuntimeError(msg)
     return _session_factory
