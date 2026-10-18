@@ -242,6 +242,11 @@ def test_cache_scope_separates_read_scoped_owners() -> None:
         from_legacy_update=lambda value: value,
     )
     assert cache_scope(compat) == cache_scope(scoped_a)
+    # Different owners of a read-scoped CRUD therefore never share a cache key.
+    params = {"bucket": None}
+    key_a = cache_key(kind="stats", schema=_Gadget, scope=cache_scope(scoped_a), params=params)
+    key_b = cache_key(kind="stats", schema=_Gadget, scope=cache_scope(scoped_b), params=params)
+    assert key_a != key_b
 
 
 def test_cache_key_depends_on_every_component() -> None:
