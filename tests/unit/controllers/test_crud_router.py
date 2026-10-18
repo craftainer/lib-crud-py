@@ -31,7 +31,7 @@ from craftainer_tool_crud.repositories.stats import (
     TimeBucket,
     TimeBucketCount,
 )
-from tests.unit.craftainer_tool_crud.conftest import CrudConfigOverride
+from tests.unit.conftest import CrudConfigOverride
 
 
 @dataclass

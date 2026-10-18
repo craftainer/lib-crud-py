@@ -6,7 +6,6 @@ from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.hero import Hero as HeroModel
 from craftainer_tool_crud.interfaces import dependency
 from craftainer_tool_crud.interfaces.base import InMemoryEventSink, MQTTEventSink, MQTTEventSource
 from craftainer_tool_crud.interfaces.dependency import (
@@ -16,7 +15,8 @@ from craftainer_tool_crud.interfaces.dependency import (
 )
 from craftainer_tool_crud.repositories.memory import InMemoryRepository
 from craftainer_tool_crud.repositories.sqlalchemy import SQLAlchemyRepository
-from tests.unit.craftainer_tool_crud.conftest import CrudConfigOverride
+from tests.support.hero_model import Hero as HeroModel
+from tests.unit.conftest import CrudConfigOverride
 
 
 def test_mock_mode_shares_one_repository_instance_across_calls(

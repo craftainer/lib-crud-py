@@ -2,8 +2,8 @@
 
 from datetime import UTC, datetime
 
-from app.views.hero_v2 import HeroV2, HeroV2Create
 from craftainer_tool_crud.xml_codec import from_xml, to_xml
+from tests.support.hero_views import HeroV2, HeroV2Create
 
 
 def test_to_xml_renders_one_element_per_scalar_field() -> None:

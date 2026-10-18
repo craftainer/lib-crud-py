@@ -1,7 +1,7 @@
 """Unit test: InMemoryRepository's filter/sort/bulk logic, one case per FilterOp.
 
 Uses the Hero model directly (not mocked) since InMemoryRepository is generic over
-any IdentifiedBase subclass and Hero is already the example resource in this repo.
+any IdentifiedBase subclass and Hero is the test resource in tests/support.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -9,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.hero import Hero
 from craftainer_tool_crud.models.base import IdentifiedBase
 from craftainer_tool_crud.models.mixins import Lockable
 from craftainer_tool_crud.repositories import memory
@@ -17,6 +16,7 @@ from craftainer_tool_crud.repositories.base import RecordLockedError
 from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_tool_crud.repositories.memory import InMemoryRepository
 from craftainer_tool_crud.repositories.stats import TimeBucket
+from tests.support.hero_model import Hero
 
 
 @pytest.fixture
@@ -132,10 +132,10 @@ async def test_count_matches_filters(repository: InMemoryRepository[Hero]) -> No
 async def test_get_update_and_delete_by_id(repository: InMemoryRepository[Hero]) -> None:
     """get()/update()/delete() (single-record) round-trip by id.
 
-    Exercised directly here since Hero's own real HTTP routes no longer call these
-    for update/delete -- app.crud_1.heroes.heroes_v2.get_hero_crud always sets an
-    OwnerScope, which routes CRUDInterface.update/delete through update_many/
-    delete_many instead (see craftainer_tool_crud.interfaces.base.OwnerScope's docstring).
+    Exercised directly here since an owner-scoped resource's real HTTP routes never
+    call these for update/delete -- an OwnerScope routes CRUDInterface.update/delete
+    through update_many/delete_many instead (see
+    craftainer_tool_crud.interfaces.base.OwnerScope's docstring).
     """
     heroes = await repository.list()
     batman = next(hero for hero in heroes if hero.name == "Batman")
@@ -380,8 +380,8 @@ class _PlainRecord(IdentifiedBase):
     """A model with none of craftainer_tool_crud.models.mixins' record-lifecycle mixins.
 
     Only used to prove stats()'s `lifecycle=None` no-op case -- see
-    ../../../src/app/repositories/README.md's "Record-lifecycle mixins" section:
-    a model without a given mixin is completely unaffected.
+    repositories/README.md's "Record-lifecycle mixins" section: a model without a
+    given mixin is completely unaffected.
     """
 
     __tablename__ = "stats_test_plain_records"
@@ -395,3 +395,8 @@ async def test_stats_lifecycle_is_none_without_any_mixin() -> None:
     await repository.create({"value": 1})
     result = await repository.stats(numeric_fields=["value"], categorical_fields=[])
     assert result.lifecycle is None
+
+
+async def test_get_missing_returns_none(repository: InMemoryRepository[Hero]) -> None:
+    """get() of an id that was never created returns None."""
+    assert await repository.get(999) is None
