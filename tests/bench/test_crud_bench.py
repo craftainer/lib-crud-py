@@ -50,7 +50,9 @@ def repository(runner: asyncio.Runner) -> InMemoryRepository[Hero]:
 
 def test_parse_filters(benchmark: BenchmarkFixture) -> None:
     """Turn a realistic query string into validated FilterClauses."""
-    params = QueryParams("name__icontains=hero&power_level__min=10&power_level__max=90&id__in=1,2,3")
+    params = QueryParams(
+        "name__icontains=hero&power_level__min=10&power_level__max=90&id__in=1,2,3"
+    )
     clauses = benchmark(parse_filters, HeroV2, params)
     assert len(clauses) == 4
 

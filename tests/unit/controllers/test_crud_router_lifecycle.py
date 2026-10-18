@@ -93,8 +93,8 @@ _XML_HEADERS = {"Content-Type": "application/xml"}
 def _fresh_repositories() -> Iterator[None]:
     """Empty both in-memory repositories around every test."""
     for repository in (_heroes, _revisions):
-        repository._records.clear()  # noqa: SLF001
-        repository._next_id = 1  # noqa: SLF001
+        repository._records.clear()
+        repository._next_id = 1
     yield
 
 
@@ -130,14 +130,14 @@ def test_json_draft_publish_and_revisions() -> None:
 
     revisions = client.get("/heroes/revisions", params={"id": hero_id})
     assert revisions.status_code == 200
-    assert [r["action"] for r in revisions.json()][0] == "update"
+    assert revisions.json()[0]["action"] == "update"  # newest first
     assert len(revisions.json()) == 3
 
 
 def test_json_publish_of_unowned_record_is_404() -> None:
     """A record the caller can see but not write (owner mismatch) 404s instead of a 500."""
     hero = client.post("/heroes", json={"name": "Mine", "powers": ["Flight"]}).json()
-    _heroes._records[hero["id"]].owner_id = "someone-else"  # noqa: SLF001
+    _heroes._records[hero["id"]].owner_id = "someone-else"
     assert client.post("/heroes/publish", params={"id": hero["id"]}).status_code == 404
 
 
@@ -170,7 +170,9 @@ def test_xml_clone_draft_publish_restore_and_revisions() -> None:
     assert b"<name>Orig</name>" in cloned.content
     assert client.post("/heroes/xml/clone", params={"id": 999}).status_code == 404
 
-    draft = client.post("/heroes/xml/draft", content=b"<hero><name>Wip</name></hero>", headers=_XML_HEADERS)
+    draft = client.post(
+        "/heroes/xml/draft", content=b"<hero><name>Wip</name></hero>", headers=_XML_HEADERS
+    )
     assert draft.status_code == 201
     draft_id = 3
     assert client.post("/heroes/xml/publish", params={"id": draft_id}).status_code == 422
@@ -202,7 +204,7 @@ def test_xml_clone_draft_publish_restore_and_revisions() -> None:
 def test_xml_publish_of_unowned_record_is_404() -> None:
     """Same guard as the JSON route: an unwritable record 404s."""
     client.post("/heroes/xml", content=_hero_xml("Mine"), headers=_XML_HEADERS)
-    _heroes._records[1].owner_id = "someone-else"  # noqa: SLF001
+    _heroes._records[1].owner_id = "someone-else"
     assert client.post("/heroes/xml/publish", params={"id": 1}).status_code == 404
 
 

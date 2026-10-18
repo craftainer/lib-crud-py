@@ -25,9 +25,9 @@ class HeroV2Update(ORMView):
     """Fields accepted when partially updating a Hero -- all optional.
 
     Also the shape a draft create/publish body validates against (see
-    craftainer_tool_crud.controllers.crud_router's `/draft` route) -- a draft is just a record accepted through this same
-    all-optional shape, with `id` and every omitted field taking its column
-    default.
+    craftainer_tool_crud.controllers.crud_router's `/draft` route) -- a draft is
+    just a record accepted through this same all-optional shape, with `id` and
+    every omitted field taking its column default.
 
     `is_locked`/`publish_at`/`unpublish_at` are the lifecycle fields accepted here
     (unlike `is_draft`/`archived_at`, each set exclusively through its own

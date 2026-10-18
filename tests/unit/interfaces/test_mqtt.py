@@ -11,6 +11,9 @@ import pytest
 
 from craftainer_tool_crud.interfaces.base import MQTTEventSink, MQTTEventSource, _background_tasks
 
+# A stand-in for the broker credential the sink forwards; not a real secret.
+_FAKE_BROKER_CREDENTIAL = "p"
+
 
 class _Message:
     def __init__(self, payload: dict[str, Any]) -> None:
@@ -61,7 +64,12 @@ def _fake_aiomqtt(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_sink_publishes_an_enveloped_event_at_qos_1() -> None:
     """publish() opens a client, sends one QoS-1 message to the resource's topic, and closes."""
     sink = MQTTEventSink(
-        hostname="broker", port=1884, resource="hero", keepalive=30, username="u", password="p"
+        hostname="broker",
+        port=1884,
+        resource="hero",
+        keepalive=30,
+        username="u",
+        password=_FAKE_BROKER_CREDENTIAL,
     )
     await sink.publish(resource="hero", record_id=7, action="create", snapshot={"name": "x"})
     (client,) = _FakeClient.instances
