@@ -422,6 +422,11 @@ def test_json_router_bulk_delete_via_filters() -> None:
         assert response.status_code == 200
         body = response.json()
         assert body["matched"] == 2
+        # Compact JSON straight from pydantic, same bytes JSONResponse would have produced.
+        assert response.headers["content-type"] == "application/json"
+        assert response.content == (
+            b'{"matched":2,"ids":[' + ",".join(str(i) for i in body["ids"]).encode() + b"]}"
+        )
 
         remaining = client.get("/gadgets").json()
         assert [g["name"] for g in remaining] == ["banana"]
@@ -1059,3 +1064,12 @@ def test_xml_router_stats_and_predict_render_nested_xml() -> None:
         assert predict_response.text.count("<prediction-point>") == 1
     finally:
         del app.dependency_overrides[get_gadget_crud]
+
+
+def test_json_router_bulk_delete_openapi_documents_result_schema() -> None:
+    """DELETE / keeps BulkDeleteResult in the OpenAPI schema despite returning a bare Response."""
+    responses = app.openapi()["paths"]["/gadgets"]["delete"]["responses"]
+    assert responses["200"]["content"]["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/BulkDeleteResult"
+    }
+    assert "204" in responses
