@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from craftainer_tool_crud.controllers.crud_router import list_etag, record_etag
 from craftainer_tool_crud.interfaces.base import CRUDInterface
-from tests.unit.craftainer_tool_crud.controllers.test_crud_router import (
+from tests.unit.controllers.test_crud_router import (
     _FakeGadgetRepository,
     _Gadget,
     app,

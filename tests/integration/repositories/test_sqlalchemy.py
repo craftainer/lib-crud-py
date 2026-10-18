@@ -7,14 +7,14 @@ import pytest
 from sqlalchemy import Integer, Table
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db import engine
-from app.db import session_factory as async_session_factory
-from app.models.hero import Hero
 from craftainer_tool_crud.models.base import IdentifiedBase
 from craftainer_tool_crud.repositories.base import RecordLockedError
 from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_tool_crud.repositories.sqlalchemy import SQLAlchemyRepository
 from craftainer_tool_crud.repositories.stats import TimeBucket
+from tests.integration.db import engine
+from tests.integration.db import session_factory as async_session_factory
+from tests.support.hero_model import Hero
 
 
 class _PlainRecord(IdentifiedBase):
@@ -385,3 +385,9 @@ async def test_stats_lifecycle_is_none_without_any_mixin_against_real_postgres()
     finally:
         async with engine.begin() as conn:
             await conn.run_sync(_plain_record_table.drop)
+
+
+async def test_get_missing_returns_none_against_real_postgres() -> None:
+    """get() of an id that doesn't exist returns None."""
+    async with async_session_factory() as session:
+        assert await SQLAlchemyRepository(session, Hero).get(2_000_000_000) is None

@@ -1,9 +1,9 @@
-# crud/
+# craftainer_tool_crud/
 
-The generic CRUD framework `app`'s resource packages (e.g. `app.crud_1.
-heroes`) build on — router factories, the CRUD interface, storage-agnostic
-repositories, and model/view bases — laid out as the same MVC-ish split
-as `app/`, each subpackage with its own `README.md`:
+The generic CRUD framework a host application's resource packages build on —
+router factories, the CRUD interface, storage-agnostic repositories, and
+model/view bases — laid out as an MVC-ish split, each subpackage with its own
+`README.md`:
 
 - `models/` — the generic SQLAlchemy declarative base, record-lifecycle
   mixins, and shared revision model.
@@ -14,11 +14,10 @@ as `app/`, each subpackage with its own `README.md`:
 - `repositories/` — storage-agnostic CRUD access, backing `interfaces/`.
 - `controllers/` — the generic CRUD router factories.
 
-None of these carry resource-specific code — a resource's own model
-(`app.models.hero`), views (`app.views.hero_v1`/`hero_v2`), and router
-(`app.crud_1.heroes`) live in `app/` instead and import from here to
-build on this framework; see `../app/README.md`'s "Example CRUD
-resource: Hero".
+None of these carry resource-specific code — a resource's own model,
+views and router live in the host application and import from here to
+build on this framework. `tests/support/` holds a worked example (a
+`Hero` model and its views).
 
 ## Layering
 
@@ -28,15 +27,13 @@ layers never import from higher ones (`models` → `views` →
 `import-linter`'s `"crud layers"` contract in `../../pyproject.toml`'s
 `[tool.importlinter]`, run via `uv run lint-imports` (wired into
 `../../.pre-commit-config.yaml`'s manual/pre-push stage, same as mypy).
-This contract covers only ordering *within* `crud/` itself; `app/` has
-its own separate `"app layers"` contract, documented in `../app/
-README.md`'s own "Layering" section. `interfaces/base.py` imports
-`aiomqtt` directly (`MQTTEventSink`/`MQTTEventSource`, see `../app/
-README.md`'s "Example CRUD resource: Hero") — a third-party dependency,
-not another `crud/` module, so it doesn't change this layer order.
+This contract covers only ordering *within* the package. `interfaces/base.py`
+imports `aiomqtt` lazily (`MQTTEventSink`/`MQTTEventSource`) — a
+third-party dependency, not another module here, so it doesn't change
+this layer order.
 
-This package imports nothing from `app` or `craftainer_tool_observability`;
-the `"crud never imports app"` import-linter contract enforces it. Its
+This package imports nothing from the host application; the
+`"crud never imports app"` import-linter contract enforces it. Its
 generic `xml_codec.py` and `web_components.py` live at the package top
 level (below `controllers`, which uses them), not in `app`.
 
@@ -73,11 +70,11 @@ this package receives them:
 - Migrations stay app-owned: the app's Alembic setup targets
   `models.base.Base.metadata`, so a release of this package that changes
   its models (`revision`, mixins) needs a new app-side migration
-  ([NFR-0019](../../docs/nfrs/NFR-0019-migrations-immutable-once-applied.md)).
-- Intended extras once extracted: `[mqtt]` (`aiomqtt`, imported only inside
+  (NFR-0019 in the host repository).
+- Extras: `[mqtt]` (`aiomqtt`, imported only inside
   `MQTTEventSink`/`MQTTEventSource`) and `[xml]` (`defusedxml`, imported only
-  inside `xml_codec.from_xml` and the router's XML-body parsing). In this
-  repository both still sit in `[project] dependencies`.
+  inside `xml_codec.from_xml` and the router's XML-body parsing).
+  `tests/unit/test_optional_extras.py` proves the core imports without them.
 
 ## Do
 
@@ -89,8 +86,8 @@ this package receives them:
 ## Don't
 
 - Add resource-specific code anywhere in this package — a resource's
-  own model/view/router belongs in `app/` instead, built on top of the
+  own model/view/router belongs in the host application, built on top of the
   generic pieces here.
-- Import anything from `app` (e.g. `app.models`, `app.config`,
-  `app.rate_limit`) — pass what you need in through `config.configure(...)`
-  or a factory parameter instead; see "Host integration" above.
+- Import anything from the host application (`app`) — pass what you need in
+  through `config.configure(...)` or a factory parameter instead; see "Host
+  integration" above.

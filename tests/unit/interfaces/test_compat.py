@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 from craftainer_tool_crud.interfaces.base import CRUDInterface
 from craftainer_tool_crud.interfaces.compat import CompatCRUD
 from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp
-from tests.unit.craftainer_tool_crud.interfaces.test_base import (
+from tests.unit.interfaces.test_base import (
     _FakeWidgetRepository,
     _Widget,
     _WidgetCreate,
