@@ -104,6 +104,25 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         """Bind this repository to a session and the SQLAlchemy model it persists."""
         self._session = session
         self._model = model
+        self._column_names = frozenset(sa_inspect(model).columns.keys())
+
+    async def _reload(self, instances: Sequence[ModelT]) -> None:
+        """Re-read `instances` from the database in one SELECT, refreshing expired columns.
+
+        A flushed UPDATE leaves `updated_at` (its `onupdate` is a SQL expression) expired,
+        and an async session cannot lazy-load it, so the rows are re-read here. One
+        `WHERE id IN (...)` with `populate_existing` replaces a per-row `session.refresh`
+        (one SELECT per row) with one SELECT per batch; the identity map hands back the
+        same objects, now carrying the server-generated values.
+        """
+        if not instances:
+            return
+        statement = (
+            select(self._model)
+            .where(self._model.id.in_([instance.id for instance in instances]))
+            .execution_options(populate_existing=True)
+        )
+        await self._session.execute(statement)
 
     def _column(self, field: str) -> ColumnElement[Any]:
         """Return `field` as a mapped column of this repository's model, or raise.
@@ -124,7 +143,7 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         sort_field call this repository directly, bypassing that validation, and still
         count toward that suite's own 95% gate.
         """
-        if field not in sa_inspect(self._model).columns.keys():  # noqa: SIM118 -- .keys() is a ColumnCollection, not a dict
+        if field not in self._column_names:
             raise ValueError(  # pragma: no cover -- see docstring above
                 f"{field!r} is not a filterable/sortable column of {self._model!r}"
             )
@@ -283,8 +302,9 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         """Insert a new row from the given field values and return it."""
         instance = self._model(**data)
         self._session.add(instance)
+        # No reload: SQLAlchemy 2.0's default eager_defaults="auto" fetches the INSERT's
+        # server-generated created_at/updated_at via RETURNING on asyncpg.
         await self._session.flush()
-        await self._session.refresh(instance)
         return instance
 
     async def update(  # pragma: no cover -- see module docstring
@@ -298,7 +318,7 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         for field, value in data.items():
             setattr(instance, field, value)
         await self._session.flush()
-        await self._session.refresh(instance)
+        await self._reload([instance])
         return instance
 
     async def delete(self, record_id: int) -> bool:  # pragma: no cover -- see module docstring
@@ -342,8 +362,7 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
             for field, value in data.items():
                 setattr(instance, field, value)
         await self._session.flush()
-        for instance in instances:
-            await self._session.refresh(instance)
+        await self._reload(instances)
         return instances
 
     async def delete_many(self, *, filters: Sequence[FilterClause]) -> Sequence[ModelT]:
@@ -368,9 +387,8 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
             else:
                 await self._session.delete(instance)  # pragma: no cover -- see module docstring
         await self._session.flush()
-        for instance in instances:
-            if hasattr(instance, "archived_at"):  # pragma: no branch -- see module docstring
-                await self._session.refresh(instance)
+        if hasattr(self._model, "archived_at"):  # pragma: no branch -- see module docstring
+            await self._reload(instances)
         return instances
 
     async def restore(  # pragma: no cover -- see module docstring
@@ -382,7 +400,7 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
             return None
         instance.archived_at = None
         await self._session.flush()
-        await self._session.refresh(instance)
+        await self._reload([instance])
         return instance
 
     async def restore_many(self, *, filters: Sequence[FilterClause]) -> Sequence[ModelT]:
@@ -394,8 +412,7 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         for instance in instances:
             instance.archived_at = None  # type: ignore[attr-defined]
         await self._session.flush()
-        for instance in instances:
-            await self._session.refresh(instance)
+        await self._reload(instances)
         return instances
 
     async def _numeric_stats(
