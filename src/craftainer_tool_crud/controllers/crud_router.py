@@ -350,7 +350,9 @@ def _require_cache_resource(stats_cache: StatsCache | None, resource: str | None
     """
     if stats_cache is None:
         return ""
-    if resource is None:
+    # e2e-unreachable: a config guard; covered by tests/unit/craftainer_tool_crud/controllers/
+    # test_crud_router_stats_cache.py
+    if resource is None:  # pragma: no cover
         raise ValueError("stats_cache requires resource= to be set")
     return resource
 

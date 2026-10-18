@@ -70,7 +70,9 @@ def cache_scope(crud: object) -> str:
     owner = getattr(inner, "_owner", None)
     if owner is None or not owner.read_scoped:
         return "shared"
-    return f"owner:{owner.field}={owner.value}"
+    # e2e-unreachable: Hero is read_scoped=False; covered by tests/unit/craftainer_tool_crud/
+    # controllers/test_crud_router_stats_cache.py
+    return f"owner:{owner.field}={owner.value}"  # pragma: no cover
 
 
 def cache_key(*, kind: str, schema: type[BaseModel], scope: str, params: Mapping[str, Any]) -> str:
