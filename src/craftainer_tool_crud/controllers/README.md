@@ -233,6 +233,29 @@ before the helper was introduced.
 still documents the submission shape, rather than showing an undocumented
 body.
 
+## Conditional requests
+
+`build_json_router`/`build_xml_router` give record reads an `ETag` and
+honor `If-None-Match`/`If-Match` (RFC 9110); `build_web_router` serves no
+records, so it has none.
+
+- **ETag:** a single-record GET gets a strong tag from the record's `id` +
+  `updated_at` (a view without `updated_at` falls back to a hash of its
+  serialized form). A list GET gets a weak (`W/`) tag over the page's ids
+  and `updated_at` values. Both send `Cache-Control: private, no-cache`.
+- **304:** a matching `If-None-Match` (weak comparison; `*` or a tag list
+  also match) returns `304` with no body, keeping the `ETag`,
+  `Cache-Control` and router-level dependency headers.
+- **If-Match / 412:** on `PATCH`/`DELETE` with `?id=`, a stale tag raises
+  `412` (problem details); strong comparison, so a weak tag never matches;
+  `*` matches any existing record; a missing record still gets the write's
+  own `404`. A successful `PATCH` returns the new `ETag`.
+- **Race caveat:** the `If-Match` check (`crud.get`) and the write are
+  separate statements, so two writers racing inside that gap can both
+  pass. It closes the read-modify-write window a client holds open, not
+  that one.
+- **Bulk actions** (no `?id=`) are unconditional: `If-Match` is ignored.
+
 ## Do
 
 - Add a resource-agnostic router-building helper (usable by any future

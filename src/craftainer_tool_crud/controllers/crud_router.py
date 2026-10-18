@@ -18,7 +18,9 @@ given filters" logic each factory's routes wrap in their own response format.
 """
 
 import asyncio
+import hashlib
 import json
+import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Annotated, Any
@@ -135,6 +137,101 @@ def _validate_publish_ready(record: BaseModel, create_schema: type[BaseModel]) -
         create_schema.model_validate(required_fields)
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
+
+
+# `Cache-Control` on every ETag-bearing GET: a browser may keep the response but must
+# revalidate it, and a shared proxy never stores it (responses are per-user, ADR-0011).
+_REVALIDATE_CACHE_CONTROL = "private, no-cache"
+
+_ETAG_TOKEN = re.compile(r'(?:W/)?"[^"]*"|\*')
+
+
+def _digest(source: str) -> str:
+    """Return a short stable hex digest of `source`, for an entity-tag's opaque value."""
+    return hashlib.sha256(source.encode()).hexdigest()[:32]
+
+
+def _record_version(record: BaseModel) -> str:
+    """Return what identifies one record's current state: `id` + `updated_at`.
+
+    A view with no `updated_at` (not every resource exposes one) falls back to its own
+    serialized form, which changes whenever anything visible about the record does.
+    """
+    updated_at = getattr(record, "updated_at", None)
+    if updated_at is None:
+        return record.model_dump_json()
+    return f"{getattr(record, 'id', '')}:{updated_at.isoformat()}"
+
+
+def record_etag(record: BaseModel) -> str:
+    """Return the strong `ETag` for a single record (shared by GET, PATCH and DELETE)."""
+    return f'"{_digest(_record_version(record))}"'
+
+
+def list_etag(records: Sequence[BaseModel]) -> str:
+    """Return the weak `ETag` for one page of records: their ids and `updated_at` values."""
+    return f'W/"{_digest("|".join(_record_version(r) for r in records))}"'
+
+
+def _revalidation_headers(result: BaseModel | Sequence[BaseModel]) -> dict[str, str]:
+    """Return the `ETag` + `Cache-Control` headers for a single record or a page of them."""
+    etag = record_etag(result) if isinstance(result, BaseModel) else list_etag(result)
+    return {"ETag": etag, "Cache-Control": _REVALIDATE_CACHE_CONTROL}
+
+
+def _entity_tags(header: str) -> list[str]:
+    """Split an `If-Match`/`If-None-Match` value into its entity-tags (and `*`)."""
+    return _ETAG_TOKEN.findall(header)
+
+
+def _opaque(tag: str) -> str:
+    """Return `tag` without its weakness prefix, for weak comparison."""
+    return tag.removeprefix("W/")
+
+
+def _not_modified(request: Request, response: Response, headers: dict[str, str]) -> Response | None:
+    """Return a bodiless `304` if the request's `If-None-Match` matches `headers["ETag"]`.
+
+    Weak comparison (RFC 9110 8.8.3.2): the `W/` prefix is ignored on both sides. `None`
+    means "send the full response"; the caller then attaches `headers` to it.
+    """
+    header = request.headers.get("if-none-match")
+    if header is None:
+        return None
+    etag = _opaque(headers["ETag"])
+    if not any(tag == "*" or _opaque(tag) == etag for tag in _entity_tags(header)):
+        return None
+    return _with_dependency_headers(response, Response(status_code=304, headers=headers))
+
+
+async def _enforce_if_match(
+    crud: Any,
+    request: Request,
+    *,
+    id: int | None,  # noqa: A002
+    not_found: str,
+) -> None:
+    """Raise `412` when `If-Match` is present and the addressed record's `ETag` isn't listed.
+
+    Only a single-record (`?id=`) write is conditional: a bulk action has no one
+    representation to compare against, so `If-Match` is ignored there. Strong
+    comparison (RFC 9110 8.8.3.2): a weak tag never matches, `*` matches any existing
+    record. A missing record falls through to the write's own `404`. The check and the
+    write are separate statements, so two writers racing inside that gap can still both
+    pass; this closes the read-modify-write window a client holds open, not that one.
+    """
+    header = request.headers.get("if-match")
+    if header is None or id is None:
+        return
+    current = await crud.get(id, include_archived=True, include_unpublished=True)
+    if current is None:
+        return
+    etag = record_etag(current)
+    if not any(tag in ("*", etag) for tag in _entity_tags(header)):
+        raise HTTPException(
+            status.HTTP_412_PRECONDITION_FAILED,
+            f"{not_found.removesuffix(' not found')} was modified since the supplied If-Match",
+        )
 
 
 async def _resolve_stats(crud: Any, schema: type[BaseModel], request: Request) -> ResourceStatsView:
@@ -382,6 +479,12 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     over whatever filters are given, rejecting an empty filter set with no `id`
     (400) so an empty query string can never target every record by accident.
 
+    Single-record GETs carry a strong `ETag` (id + `updated_at`), list GETs a weak one
+    over the page, both with `Cache-Control: private, no-cache`; a matching
+    `If-None-Match` gets a bodiless `304`. PATCH/DELETE with `?id=` honor `If-Match`
+    (`412` problem details on a mismatch) and PATCH returns the new `ETag`. The XML
+    router mirrors all of this; the web router serves no records.
+
     `stats_cache`, when given (with `resource`), serves `/stats` and `/predict` from a
     shared `craftainer_tool_crud.interfaces.cache.StatsCache` as pre-serialized bodies,
     keyed by route, normalized query params, response schema and the caller's
@@ -436,13 +539,19 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     async def list_records(
         crud: crud_dependency,
         request: Request,
+        response: Response,
         id: int | None = None,  # noqa: A002
         skip: int = 0,
         limit: Annotated[int, Query(le=_MAX_LIMIT)] = 100,
     ) -> schema | list[schema]:  # type: ignore[valid-type]
-        return await resolve_list_or_get(  # type: ignore[no-any-return]
+        result = await resolve_list_or_get(
             crud, schema, request, id=id, skip=skip, limit=limit, not_found=not_found
         )
+        headers = _revalidation_headers(result)
+        if (unchanged := _not_modified(request, response, headers)) is not None:
+            return unchanged
+        response.headers.update(headers)
+        return result  # type: ignore[no-any-return]
 
     @router.post("", status_code=status.HTTP_201_CREATED, dependencies=[write_roles])
     async def create_record(record: create_schema, crud: crud_dependency) -> schema:  # type: ignore[valid-type]
@@ -457,10 +566,17 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     async def update_records(
         crud: crud_dependency,
         request: Request,
+        response: Response,
         record: update_schema,  # type: ignore[valid-type]
         id: int | None = None,  # noqa: A002
     ) -> schema | BulkUpdateResult:  # type: ignore[valid-type]
-        return await resolve_update(crud, schema, request, id=id, data=record, not_found=not_found)  # type: ignore[no-any-return]
+        await _enforce_if_match(crud, request, id=id, not_found=not_found)
+        result = await resolve_update(
+            crud, schema, request, id=id, data=record, not_found=not_found
+        )
+        if not isinstance(result, BulkUpdateResult):
+            response.headers["ETag"] = record_etag(result)
+        return result  # type: ignore[no-any-return]
 
     @router.delete(
         "",
@@ -478,6 +594,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
         response: Response,
         id: int | None = None,  # noqa: A002
     ) -> Response:
+        await _enforce_if_match(crud, request, id=id, not_found=not_found)
         result = await resolve_delete(crud, schema, request, id=id, not_found=not_found)
         if result is None:
             return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -749,11 +866,16 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
         result = await resolve_list_or_get(
             crud, schema, request, id=id, skip=skip, limit=limit, not_found=not_found
         )
+        headers = _revalidation_headers(result)
+        if (unchanged := _not_modified(request, response, headers)) is not None:
+            return unchanged
         if isinstance(result, list):
             body = f"<{list_tag}>" + "".join(to_xml(r, item_tag) for r in result) + f"</{list_tag}>"
         else:
             body = to_xml(result, item_tag)
-        return _with_dependency_headers(response, Response(content=body, media_type=xml_media_type))
+        return _with_dependency_headers(
+            response, Response(content=body, media_type=xml_media_type, headers=headers)
+        )
 
     @router.post("", status_code=status.HTTP_201_CREATED, dependencies=[write_roles])
     async def create_record_xml(
@@ -779,14 +901,19 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
         id: int | None = None,  # noqa: A002
     ) -> Response:
         record = _parse_xml_body(await request.body(), update_schema)
+        await _enforce_if_match(crud, request, id=id, not_found=not_found)
         result = await resolve_update(
             crud, schema, request, id=id, data=record, not_found=not_found
         )
         if isinstance(result, BulkUpdateResult):
             body = to_xml(result, "bulk-update-result")
+            headers = {}
         else:
             body = to_xml(result, item_tag)
-        return _with_dependency_headers(response, Response(content=body, media_type=xml_media_type))
+            headers = {"ETag": record_etag(result)}
+        return _with_dependency_headers(
+            response, Response(content=body, media_type=xml_media_type, headers=headers)
+        )
 
     @router.delete("", dependencies=[delete_roles])
     @rate_limit
@@ -796,6 +923,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
         response: Response,
         id: int | None = None,  # noqa: A002
     ) -> Response:
+        await _enforce_if_match(crud, request, id=id, not_found=not_found)
         result = await resolve_delete(crud, schema, request, id=id, not_found=not_found)
         if result is None:
             built = Response(status_code=status.HTTP_204_NO_CONTENT)
