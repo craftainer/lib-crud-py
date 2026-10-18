@@ -147,6 +147,19 @@ parsing/field-classification/forecast logic both `build_json_router` and
 `FieldKind` classification, narrowed to plain int/float fields for
 numeric aggregates — see its own module docstring for why date/datetime
 fields, also `FieldKind.NUMBER` for filtering purposes, are excluded).
+Pass `stats_cache=` (a `../interfaces/cache.py` `StatsCache`, with `resource=`) to
+`build_json_router`/`build_xml_router`/`build_resource_router` to serve both routes from
+a shared cache as pre-serialized bodies. The key is built by `crud_stats.cache_key` from
+the route kind, normalized query parameters (so unrelated params and param order don't
+split entries), the response schema (a deprecated version never shares an entry with the
+current one) and `crud_stats.cache_scope(crud)`: one scope per owner when the CRUD object
+carries a read-scoped `OwnerScope` (ADR-0011), otherwise `shared`. Roles aren't in the
+scope because `read_roles` runs first and decides who may read, not what they read.
+Validation errors (422) are raised before the cache is consulted and are never stored.
+Cached responses carry `X-Stats-Cache: hit|miss`; with `stats_cache=None` (the default)
+the routes are byte-identical to before. Invalidation is the host's job (see
+`../interfaces/cache.py` and `app.cache.run_invalidation`).
+
 `/predict`'s response always names its method `"linear_regression"`
 explicitly, so a client can't mistake it for a trained model — see
 `craftainer_tool_crud.views.stats.PredictionView`.

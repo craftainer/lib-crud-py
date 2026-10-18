@@ -65,6 +65,11 @@ this package receives them:
   `bulk_rate_limit` route decorator (e.g. `limiter.limit("20/minute")`)
   for the bulk-action routes; `None` means unlimited. This package does
   not depend on `slowapi`.
+- Stats caching: the router factories take an optional `stats_cache`
+  (`interfaces/cache.py`'s `StatsCache` protocol) to serve `/stats` and
+  `/predict` from a shared cache, and `None` means no caching. The host supplies the
+  implementation and drives invalidation from the CRUD event stream; this package
+  does not depend on Redis.
 - Migrations stay app-owned: the app's Alembic setup targets
   `models.base.Base.metadata`, so a release of this package that changes
   its models (`revision`, mixins) needs a new app-side migration

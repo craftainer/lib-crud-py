@@ -28,9 +28,12 @@ repository layer already knows how to produce, and isn't worth teaching it for
 this one controller-level use).
 """
 
-from collections.abc import Sequence
+import hashlib
+import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
@@ -50,6 +53,46 @@ DEFAULT_PERIODS = 4
 # a sanity bound rather than a precise one (this endpoint is a demo/reporting
 # feature, not a paginated listing).
 MAX_HISTORY_RECORDS = 1000
+
+
+def cache_scope(crud: object) -> str:
+    """Return the caller-scope component of a `StatsCache` key for the given CRUD object.
+
+    Aggregates are shared only between callers who see the same rows: a
+    `CRUDInterface` built with a read-scoped `OwnerScope` (ADR-0011) yields one scope
+    per owner value, anything else (no owner, or `read_scoped=False` as Hero uses)
+    yields the single shared scope. A `CompatCRUD` is looked through to the
+    `CRUDInterface` it wraps. Roles are not part of the scope: the route's `read_roles`
+    dependency runs before the cache is consulted and decides *whether* a caller may
+    read, never *what* they read.
+    """
+    inner = getattr(crud, "_crud", crud)
+    owner = getattr(inner, "_owner", None)
+    if owner is None or not owner.read_scoped:
+        return "shared"
+    return f"owner:{owner.field}={owner.value}"
+
+
+def cache_key(*, kind: str, schema: type[BaseModel], scope: str, params: Mapping[str, Any]) -> str:
+    """Return the opaque `StatsCache` key for one `/stats` or `/predict` request.
+
+    A SHA-256 over the route `kind`, the response `schema` (so a deprecated API version
+    with a different shape never shares an entry with the current one), the caller
+    `scope` (see `cache_scope`) and the already-normalized query `params` -- hashed so
+    an owner value never appears in a cache key in clear text. The app version is the
+    cache implementation's concern, not part of this key.
+    """
+    material = json.dumps(
+        {
+            "kind": kind,
+            "schema": f"{schema.__module__}.{schema.__qualname__}",
+            "scope": scope,
+            "params": dict(params),
+        },
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(material.encode()).hexdigest()
 
 
 class InsufficientHistoryError(Exception):

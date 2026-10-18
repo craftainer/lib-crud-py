@@ -19,7 +19,7 @@ given filters" logic each factory's routes wrap in their own response format.
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -42,6 +42,7 @@ from craftainer_tool_crud.controllers.crud_query import (
     parse_include_archived,
     parse_include_unpublished,
 )
+from craftainer_tool_crud.interfaces.cache import StatsCache
 from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_tool_crud.repositories.stats import TimeBucket
 from craftainer_tool_crud.views.bulk import BulkDeleteResult, BulkUpdateResult
@@ -238,6 +239,62 @@ async def _resolve_predict(
     )
 
 
+# Response header on a `/stats`/`/predict` response served through a `StatsCache`
+# (absent when no cache is configured): "hit" or "miss".
+_CACHE_HEADER = "X-Stats-Cache"
+
+
+def _require_cache_resource(stats_cache: StatsCache | None, resource: str | None) -> str:
+    """Return the resource name a `StatsCache` keys its entries by, or raise if it has none.
+
+    Cached entries are invalidated per resource (see `StatsCache.invalidate`), so a
+    router given a `stats_cache` must also be given a `resource`. Without a cache the
+    name is never used.
+    """
+    if stats_cache is None:
+        return ""
+    if resource is None:
+        raise ValueError("stats_cache requires resource= to be set")
+    return resource
+
+
+def _stats_cache_params(request: Request) -> dict[str, Any]:
+    """Normalize `/stats`'s query params for its cache key; raises 422 exactly as the route does."""
+    bucket = crud_stats.parse_bucket(request.query_params.get("bucket"))
+    return {
+        "bucket": None if bucket is None else bucket.value,
+        "include_archived": parse_include_archived(request.query_params),
+        "include_unpublished": parse_include_unpublished(request.query_params),
+    }
+
+
+def _predict_cache_params(
+    schema: type[BaseModel], *, field: str | None, periods: int, bucket_raw: str
+) -> dict[str, Any]:
+    """Normalize `/predict`'s query params for its cache key; raises 422 as the route does."""
+    bucket = crud_stats.parse_bucket(bucket_raw) or TimeBucket.DAY
+    return {
+        "field": crud_stats.parse_predict_field(schema, field),
+        "periods": periods,
+        "bucket": bucket.value,
+    }
+
+
+async def _cached_body(
+    stats_cache: StatsCache,
+    resource: str,
+    key: str,
+    build: Callable[[], Awaitable[bytes]],
+) -> tuple[bytes, str]:
+    """Return the cached body for `key`, or `build()` and store it; plus "hit"/"miss"."""
+    cached = await stats_cache.get(resource, key)
+    if cached is not None:
+        return cached, "hit"
+    body = await build()
+    await stats_cache.set(resource, key, body)
+    return body, "miss"
+
+
 def _stats_to_xml(view: ResourceStatsView) -> str:
     """Hand-assemble `ResourceStatsView` as nested XML -- see build_xml_router's `/stats` route.
 
@@ -315,6 +372,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     event_source_dependency: Any = None,  # Annotated[EventSource, Depends(...)]
     stats_enabled: bool = False,
     bulk_rate_limit: RateLimit | None = None,
+    stats_cache: StatsCache | None = None,
 ) -> APIRouter:
     """Build the standard list/create/get/update/delete JSON router for one resource.
 
@@ -323,6 +381,13 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     filtered/sorted per craftainer_tool_crud.controllers.crud_query) and PATCH/DELETE act in bulk
     over whatever filters are given, rejecting an empty filter set with no `id`
     (400) so an empty query string can never target every record by accident.
+
+    `stats_cache`, when given (with `resource`), serves `/stats` and `/predict` from a
+    shared `craftainer_tool_crud.interfaces.cache.StatsCache` as pre-serialized bodies,
+    keyed by route, normalized query params, response schema and the caller's
+    ownership scope (`crud_stats.cache_scope`); the responses then carry an
+    `X-Stats-Cache: hit|miss` header. `None` (the default) leaves both routes exactly
+    as they are without a cache.
 
     `POST <prefix>/clone?id=` is always added -- fully generic, no mixin needed
     (see docs/plans's former "Duplicate/clone" section, now folded into this
@@ -499,12 +564,31 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
             )
 
     if stats_enabled:
+        cache_resource = _require_cache_resource(stats_cache, resource)
 
-        @router.get("/stats", dependencies=[read_roles])
-        async def get_stats(crud: crud_dependency, request: Request) -> ResourceStatsView:
-            return await _resolve_stats(crud, schema, request)
+        @router.get("/stats", response_model=ResourceStatsView, dependencies=[read_roles])
+        async def get_stats(
+            crud: crud_dependency, request: Request
+        ) -> ResourceStatsView | Response:
+            if stats_cache is None:
+                return await _resolve_stats(crud, schema, request)
+            key = crud_stats.cache_key(
+                kind="stats",
+                schema=schema,
+                scope=crud_stats.cache_scope(crud),
+                params=_stats_cache_params(request),
+            )
 
-        @router.get("/predict", dependencies=[read_roles])
+            async def build() -> bytes:
+                view = await _resolve_stats(crud, schema, request)
+                return view.model_dump_json(by_alias=True).encode()
+
+            body, state = await _cached_body(stats_cache, cache_resource, key, build)
+            return Response(
+                content=body, media_type="application/json", headers={_CACHE_HEADER: state}
+            )
+
+        @router.get("/predict", response_model=PredictionView, dependencies=[read_roles])
         async def get_prediction(
             crud: crud_dependency,
             field: str | None = None,
@@ -512,9 +596,29 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
                 int, Query(ge=crud_stats.MIN_PERIODS, le=crud_stats.MAX_PERIODS)
             ] = crud_stats.DEFAULT_PERIODS,
             bucket: str = "day",
-        ) -> PredictionView:
-            return await _resolve_predict(
-                crud, schema, field=field, periods=periods, bucket_raw=bucket
+        ) -> PredictionView | Response:
+            if stats_cache is None:
+                return await _resolve_predict(
+                    crud, schema, field=field, periods=periods, bucket_raw=bucket
+                )
+            key = crud_stats.cache_key(
+                kind="predict",
+                schema=schema,
+                scope=crud_stats.cache_scope(crud),
+                params=_predict_cache_params(
+                    schema, field=field, periods=periods, bucket_raw=bucket
+                ),
+            )
+
+            async def build() -> bytes:
+                view = await _resolve_predict(
+                    crud, schema, field=field, periods=periods, bucket_raw=bucket
+                )
+                return view.model_dump_json(by_alias=True).encode()
+
+            body, state = await _cached_body(stats_cache, cache_resource, key, build)
+            return Response(
+                content=body, media_type="application/json", headers={_CACHE_HEADER: state}
             )
 
     return router
@@ -612,6 +716,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
     event_source_dependency: Any = None,  # Annotated[EventSource, Depends(...)]
     stats_enabled: bool = False,
     bulk_rate_limit: RateLimit | None = None,
+    stats_cache: StatsCache | None = None,
 ) -> APIRouter:
     """Build the XML-flavored sibling of build_json_router's routes.
 
@@ -812,14 +917,32 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
             )
 
     if stats_enabled:
+        cache_resource = _require_cache_resource(stats_cache, resource)
 
         @router.get("/stats", dependencies=[read_roles])
         async def get_stats_xml(
             crud: crud_dependency, request: Request, response: Response
         ) -> Response:
-            view = await _resolve_stats(crud, schema, request)
+            if stats_cache is None:
+                view = await _resolve_stats(crud, schema, request)
+                return _with_dependency_headers(
+                    response, Response(content=_stats_to_xml(view), media_type=xml_media_type)
+                )
+            key = crud_stats.cache_key(
+                kind="stats-xml",
+                schema=schema,
+                scope=crud_stats.cache_scope(crud),
+                params=_stats_cache_params(request),
+            )
+
+            async def build() -> bytes:
+                view = await _resolve_stats(crud, schema, request)
+                return _stats_to_xml(view).encode()
+
+            body, state = await _cached_body(stats_cache, cache_resource, key, build)
             return _with_dependency_headers(
-                response, Response(content=_stats_to_xml(view), media_type=xml_media_type)
+                response,
+                Response(content=body, media_type=xml_media_type, headers={_CACHE_HEADER: state}),
             )
 
         @router.get("/predict", dependencies=[read_roles])
@@ -832,11 +955,33 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
             ] = crud_stats.DEFAULT_PERIODS,
             bucket: str = "day",
         ) -> Response:
-            view = await _resolve_predict(
-                crud, schema, field=field, periods=periods, bucket_raw=bucket
+            if stats_cache is None:
+                view = await _resolve_predict(
+                    crud, schema, field=field, periods=periods, bucket_raw=bucket
+                )
+                return _with_dependency_headers(
+                    response,
+                    Response(content=_prediction_to_xml(view), media_type=xml_media_type),
+                )
+            key = crud_stats.cache_key(
+                kind="predict-xml",
+                schema=schema,
+                scope=crud_stats.cache_scope(crud),
+                params=_predict_cache_params(
+                    schema, field=field, periods=periods, bucket_raw=bucket
+                ),
             )
+
+            async def build() -> bytes:
+                view = await _resolve_predict(
+                    crud, schema, field=field, periods=periods, bucket_raw=bucket
+                )
+                return _prediction_to_xml(view).encode()
+
+            body, state = await _cached_body(stats_cache, cache_resource, key, build)
             return _with_dependency_headers(
-                response, Response(content=_prediction_to_xml(view), media_type=xml_media_type)
+                response,
+                Response(content=body, media_type=xml_media_type, headers={_CACHE_HEADER: state}),
             )
 
     return router
@@ -1004,6 +1149,7 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
     event_source_dependency: Any = None,  # Annotated[EventSource, Depends(...)]
     stats_enabled: bool = False,
     bulk_rate_limit: RateLimit | None = None,
+    stats_cache: StatsCache | None = None,
 ) -> APIRouter:
     """Compose build_json_router/build_xml_router/build_web_router into one resource-version router.
 
@@ -1033,6 +1179,8 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
 
     `bulk_rate_limit` is an optional route decorator (e.g. `limiter.limit("20/minute")`)
     applied to the JSON and XML bulk-action routes; None leaves them unlimited.
+
+    `stats_cache` is forwarded to the JSON and XML factories; see build_json_router.
     """
     full_prefix = prefix if api_prefix is None else api_prefix
     router = APIRouter(prefix=prefix, tags=list(tags), dependencies=list(router_dependencies))
@@ -1055,6 +1203,7 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
             event_source_dependency=event_source_dependency,
             stats_enabled=stats_enabled,
             bulk_rate_limit=bulk_rate_limit,
+            stats_cache=stats_cache,
         ),
         prefix="/json",
     )
@@ -1079,6 +1228,7 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
             event_source_dependency=event_source_dependency,
             stats_enabled=stats_enabled,
             bulk_rate_limit=bulk_rate_limit,
+            stats_cache=stats_cache,
         ),
         prefix="/xml",
     )

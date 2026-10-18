@@ -104,6 +104,13 @@ CRUD class, only a model, a view, and a router that wires the two through
   directly (for those two adapters) is a third-party dependency, not
   another `crud/` module, so it doesn't change this package's own layer
   order below.
+- `cache.py` — `StatsCache`, the small `Protocol` (`get`/`set`/`invalidate`, all per
+  `resource`) the router factories take as an optional `stats_cache=` to serve
+  `/stats` and `/predict` from a shared cache; see `../controllers/README.md`'s
+  "Generic CRUD router factories". The implementation (`app.cache` supplies Redis and
+  in-memory ones) owns the TTL, any key namespacing such as the app version, and
+  `invalidate`; implementations should degrade to a miss rather than raise on a backend
+  outage. This package never depends on Redis.
 - `compat.py` — `CompatCRUD`, a generic wrapper that adapts a current
   `CRUDInterface` to speak in terms of an older (deprecated) API
   version's view, via caller-supplied converter functions. The building
