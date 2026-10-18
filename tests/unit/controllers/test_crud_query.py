@@ -16,6 +16,7 @@ from starlette.datastructures import QueryParams
 
 from craftainer_tool_crud.controllers.crud_query import (
     describe_fields,
+    field_specs,
     parse_filters,
     parse_include_archived,
     parse_include_unpublished,
@@ -257,3 +258,16 @@ def test_parse_include_archived_invalid_value_rejected() -> None:
     """?include_archived=<not true/false/1/0> is a 400, same as an invalid boolean filter."""
     with pytest.raises(RequestValidationError):
         parse_include_archived(QueryParams("include_archived=maybe"))
+
+
+def test_field_specs_is_memoized_per_schema_class() -> None:
+    """field_specs returns the same computed mapping for a schema class on every call."""
+
+    class _A(BaseModel):
+        name: str
+
+    class _B(BaseModel):
+        name: str
+
+    assert field_specs(_A) is field_specs(_A)
+    assert field_specs(_A) is not field_specs(_B)

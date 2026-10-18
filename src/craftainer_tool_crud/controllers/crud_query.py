@@ -32,6 +32,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import Enum
+from functools import cache
 from typing import Any, Literal, Union, get_args, get_origin
 
 from fastapi.exceptions import RequestValidationError
@@ -144,8 +145,13 @@ def _choices(kind: str, python_type: object) -> tuple[str, ...] | None:
     return tuple(str(arg) for arg in get_args(python_type))  # pragma: no cover
 
 
+@cache
 def field_specs(schema: type[BaseModel]) -> dict[str, FieldSpec]:
-    """Map each filterable field of `schema` to its FieldSpec; non-filterable fields are omitted."""
+    """Map each filterable field of `schema` to its FieldSpec; non-filterable fields are omitted.
+
+    Memoized per schema class (a pure function of its fields): callers must treat the
+    returned dict as read-only.
+    """
     specs: dict[str, FieldSpec] = {}
     for name, info in schema.model_fields.items():
         kind = _classify(info.annotation)

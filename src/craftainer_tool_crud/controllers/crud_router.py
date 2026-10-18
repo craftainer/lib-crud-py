@@ -397,15 +397,30 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     ) -> schema | BulkUpdateResult:  # type: ignore[valid-type]
         return await resolve_update(crud, schema, request, id=id, data=record, not_found=not_found)  # type: ignore[no-any-return]
 
-    @router.delete("", dependencies=[delete_roles], response_model=None)
+    @router.delete(
+        "",
+        dependencies=[delete_roles],
+        response_model=None,
+        responses={
+            status.HTTP_200_OK: {"model": BulkDeleteResult},
+            status.HTTP_204_NO_CONTENT: {"description": "Single record deleted"},
+        },
+    )
     @rate_limit
     async def delete_records(
         crud: crud_dependency,
         request: Request,
+        response: Response,
         id: int | None = None,  # noqa: A002
-    ) -> BulkDeleteResult | Response:
+    ) -> Response:
         result = await resolve_delete(crud, schema, request, id=id, not_found=not_found)
-        return result if result is not None else Response(status_code=status.HTTP_204_NO_CONTENT)
+        if result is None:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        # Serialise straight from pydantic: skips FastAPI's jsonable_encoder + JSONResponse
+        # round trip (same compact bytes); dependency headers are copied over by hand.
+        return _with_dependency_headers(
+            response, Response(content=result.model_dump_json(), media_type="application/json")
+        )
 
     @router.post("/clone", status_code=status.HTTP_201_CREATED, dependencies=[write_roles])
     async def clone_record(id: int, crud: crud_dependency) -> schema:  # type: ignore[valid-type] # noqa: A002
