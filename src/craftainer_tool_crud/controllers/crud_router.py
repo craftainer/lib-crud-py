@@ -158,7 +158,9 @@ def _record_version(record: BaseModel) -> str:
     serialized form, which changes whenever anything visible about the record does.
     """
     updated_at = getattr(record, "updated_at", None)
-    if updated_at is None:
+    # pragma: no cover below is for tests/e2e: every e2e resource view has updated_at;
+    # tests/unit/craftainer_tool_crud/controllers/test_crud_router_conditional.py covers it.
+    if updated_at is None:  # pragma: no cover
         return record.model_dump_json()
     return f"{getattr(record, 'id', '')}:{updated_at.isoformat()}"
 
@@ -223,7 +225,13 @@ async def _enforce_if_match(
     header = request.headers.get("if-match")
     if header is None or id is None:
         return
-    current = await crud.get(id, include_archived=True, include_unpublished=True)
+    # Same visibility as the write itself (crud_actions reads these query params too),
+    # so a record the write would 404 on (e.g. archived by a DELETE) also 404s here.
+    current = await crud.get(
+        id,
+        include_archived=parse_include_archived(request.query_params),
+        include_unpublished=parse_include_unpublished(request.query_params),
+    )
     if current is None:
         return
     etag = record_etag(current)
