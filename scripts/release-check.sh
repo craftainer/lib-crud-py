@@ -36,6 +36,13 @@ check_import() { # <venv> <expected version>
 }
 
 echo "== local wheel: $(basename "$wheel")"
+# PEP 561: without the marker, consumers' type checkers treat the package as
+# untyped (craftainer-tool-crud/-observability 0.1.0 shipped without it).
+if ! python3 -c 'import sys, zipfile; sys.exit(f"{sys.argv[2]}/py.typed" not in zipfile.ZipFile(sys.argv[1]).namelist())' "$wheel" "$module"; then
+    echo "$(basename "$wheel") has no $module/py.typed (PEP 561 marker)" >&2
+    exit 1
+fi
+echo "OK: $module/py.typed is in the wheel"
 uv venv --quiet "$tmp/local"
 uv pip install --quiet --python "$tmp/local/bin/python" "$wheel"
 check_import "$tmp/local" "$wheel_version"
