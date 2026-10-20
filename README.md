@@ -51,7 +51,41 @@ driver (for example `asyncpg`) for `SQLAlchemyRepository`.
 - `craftainer_crud.interfaces`: `CRUDInterface`, `OwnerScope`, revision
   and event sinks, `build_repository_provider` and friends.
 - `craftainer_crud.controllers`: `build_json_router`, `build_xml_router`,
-  `build_web_router` and `build_resource_router`.
+  `build_web_router` and `build_resource_router`; `crud_manifest_router` and
+  `api_catalog_router` (`controllers.crud_manifest`).
+- `craftainer_crud.manifest`: `ManifestRegistry`, `ManifestOptions` and
+  `build_manifest`, the CRUD manifest builder.
+
+## CRUD manifest
+
+A server describes its resources, their filters, optional routes and cache hints in
+one JSON document ([`docs/manifest.md`](docs/manifest.md), schema
+[`schemas/crud-manifest/v1.json`](schemas/crud-manifest/v1.json)). Wire it up once:
+
+```python
+from craftainer_crud.controllers.crud_manifest import api_catalog_router, crud_manifest_router
+from craftainer_crud.controllers.crud_router import build_resource_router
+from craftainer_crud.manifest import ManifestOptions, ManifestRegistry
+
+registry = ManifestRegistry()
+
+router = build_resource_router(
+    ...,  # as before
+    manifest=ManifestOptions(
+        registry=registry, name="heroes", api_version="v2", model=HeroModel,
+        owner_scoped=True, read_roles=["viewer"], write_roles=["editor"], delete_roles=["maintainer"],
+    ),
+)
+app.include_router(crud_manifest_router(
+    registry, service_name="my-api", service_version="1.4.0", stats_ttl=30,
+    oidc_discovery_url="https://idp/.well-known/openid-configuration",
+))  # GET /api/_crud/manifest
+app.include_router(api_catalog_router(manifest_url="/api/_crud/manifest"))  # GET /.well-known/api-catalog
+```
+
+The factories register what they build, so the manifest cannot list a route that
+is not mounted. It is filtered to the caller by running each resource's own
+`read_roles` dependency, and carries an `ETag` over that filtered body.
 
 ## Model changes need an app-side migration
 

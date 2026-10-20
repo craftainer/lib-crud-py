@@ -41,6 +41,12 @@ from starlette.datastructures import QueryParams
 
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 
+# Page size of a list route when `?limit=` is absent, and the largest `?limit=` it accepts
+# (unbounded would let a caller pull an entire table in one response). Also what the
+# manifest reports as `pagination.default_limit`/`max_limit`.
+DEFAULT_LIMIT = 100
+MAX_LIMIT = 1000
+
 _RESERVED_PARAMS = frozenset({"skip", "limit", "sort", "include_archived", "include_unpublished"})
 
 # A `field__regex=` filter reaches Postgres's `~` operator (SQLAlchemyRepository) or
@@ -344,7 +350,10 @@ def parse_include_unpublished(params: QueryParams) -> bool:
 
 
 __all__: Sequence[str] = (
+    "DEFAULT_LIMIT",
+    "MAX_LIMIT",
     "FieldFilterInfo",
+    "FieldKind",
     "FieldSpec",
     "describe_fields",
     "field_specs",
