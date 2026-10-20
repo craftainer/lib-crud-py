@@ -92,6 +92,10 @@ known-first-party = ["craftainer_crud"]
 # which is the point (see "Generic CRUD router factories" in
 # controllers/README.md).
 "src/craftainer_crud/controllers/crud_router.py" = ["ANN401", "PLR0913", "PLR0915", "PLR0917"]
+# crud_manifest_router's keyword-only signature is the public API the template and SDK
+# mirror (registry, service name/version, stats TTL, OIDC URL, prefix) -- one named
+# parameter per piece of host input, none of which can be derived by the library.
+"src/craftainer_crud/controllers/crud_manifest.py" = ["PLR0913"]
 # render_crud_component_js takes one named parameter per opt-in UI capability
 # it renders (archivable/draftable/has_revisions/has_events/stats_enabled),
 # mirroring crud_router.py's build_json_router's own opt-in param shape --

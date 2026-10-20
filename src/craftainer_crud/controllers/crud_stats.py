@@ -42,7 +42,7 @@ from craftainer_crud.controllers.crud_query import FieldKind, field_specs
 from craftainer_crud.repositories.stats import TimeBucket, TimeBucketCount
 
 # A predicted series longer than this would be a near-meaningless naive linear
-# projection anyway -- caps the request the same way crud_router._MAX_LIMIT caps
+# projection anyway -- caps the request the same way crud_query.MAX_LIMIT caps
 # `?limit=`.
 MIN_PERIODS = 1
 MAX_PERIODS = 52

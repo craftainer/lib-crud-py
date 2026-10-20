@@ -12,7 +12,11 @@ model/view bases — laid out as an MVC-ish split, each subpackage with its own
 - `interfaces/` — the generic CRUD interface, built from a view + a
   repository.
 - `repositories/` — storage-agnostic CRUD access, backing `interfaces/`.
-- `controllers/` — the generic CRUD router factories.
+- `controllers/` — the generic CRUD router factories and the manifest routes.
+- `manifest/` — the CRUD manifest: the registry the router factories fill, its
+  pydantic models and the builder that renders it from `field_specs` and the
+  routers' own limits. Served by `controllers/crud_manifest.py`; contract in
+  `docs/manifest.md`.
 
 None of these carry resource-specific code — a resource's own model,
 views and router live in the host application and import from here to
@@ -27,7 +31,10 @@ layers never import from higher ones (`models` → `views` →
 `import-linter`'s `"crud layers"` contract in `../../pyproject.toml`'s
 `[tool.importlinter]`, run via `uv run lint-imports` (wired into
 `../../.pre-commit-config.yaml`'s manual/pre-push stage, same as mypy).
-This contract covers only ordering *within* the package. `interfaces/base.py`
+`manifest/` sits outside that contract: `controllers/crud_router.py` imports its
+registry, and its builder imports `controllers/crud_query.py`, so it is a sibling
+of `controllers`, not a layer below it (`manifest/registry.py` itself imports
+nothing from `controllers`). This contract covers only ordering *within* the package. `interfaces/base.py`
 imports `aiomqtt` lazily (`MQTTEventSink`/`MQTTEventSource`) — a
 third-party dependency, not another module here, so it doesn't change
 this layer order.

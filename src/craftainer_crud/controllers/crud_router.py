@@ -39,12 +39,16 @@ from craftainer_crud.controllers.crud_actions import (
     resolve_update,
 )
 from craftainer_crud.controllers.crud_query import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
     FieldFilterInfo,
     describe_fields,
     parse_include_archived,
     parse_include_unpublished,
 )
 from craftainer_crud.interfaces.cache import StatsCache
+from craftainer_crud.manifest.registry import ManifestOptions, RegisteredResource
+from craftainer_crud.models.mixins import Schedulable
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_crud.repositories.stats import TimeBucket
 from craftainer_crud.views.bulk import BulkDeleteResult, BulkUpdateResult
@@ -70,10 +74,6 @@ def _rate_limited(bulk_rate_limit: RateLimit | None) -> RateLimit:
     """Return `bulk_rate_limit`, or an identity decorator when none was given."""
     return bulk_rate_limit if bulk_rate_limit is not None else lambda func: func
 
-
-# Unbounded `?limit=` would let a caller pull an entire table in one response --
-# cap it the same way skip=0 already bounds the low end.
-_MAX_LIMIT = 1000
 
 # Version of these factories' own route shape/behavior -- not a resource's shape.
 # Bump only when build_json_router/build_xml_router/build_web_router themselves
@@ -204,6 +204,65 @@ def _not_modified(request: Request, response: Response, headers: dict[str, str])
     if not any(tag == "*" or _opaque(tag) == etag for tag in _entity_tags(header)):
         return None
     return _with_dependency_headers(response, Response(status_code=304, headers=headers))
+
+
+def _role_names(explicit: Sequence[str] | None, gate: Any) -> tuple[str, ...]:
+    """Return a role dependency's display names: `explicit`, else its callable's `roles`."""
+    if explicit is not None:
+        return tuple(explicit)
+    return tuple(getattr(getattr(gate, "dependency", None), "roles", ()))
+
+
+def _events_label(
+    event_source_dependency: Any, resource: str | None, options: ManifestOptions
+) -> str | None:
+    """Return the `resource` label of a router's event stream, or None when it has none."""
+    if event_source_dependency is None:
+        return None
+    return resource if resource is not None else options.name
+
+
+def _register_manifest(
+    options: ManifestOptions,
+    *,
+    base_path: str,
+    formats: dict[str, str],
+    schema: type[BaseModel],
+    create_schema: type[BaseModel],
+    update_schema: type[BaseModel],
+    draft_schema: type[BaseModel] | None,
+    archivable: bool,
+    revisions: bool,
+    events_resource: str | None,
+    stats: bool,
+    read_roles: Any,
+    write_roles: Any,
+    delete_roles: Any,
+) -> None:
+    """Record one built router in `options.registry`, for `GET .../_crud/manifest`."""
+    registered = RegisteredResource(
+        name=options.name,
+        title=options.title if options.title is not None else options.name.title(),
+        api_version=options.api_version,
+        base_path=base_path,
+        formats=formats,
+        schema=schema,
+        create_schema=create_schema,
+        update_schema=update_schema,
+        draft_schema=draft_schema,
+        archivable=archivable,
+        revisions=revisions,
+        events_resource=events_resource,
+        stats=stats,
+        schedulable=options.model is not None and issubclass(options.model, Schedulable),
+        owner_scoped=options.owner_scoped,
+        public_read=options.public_read,
+        read_gate=read_roles,
+        read_roles=_role_names(options.read_roles, read_roles),
+        write_roles=_role_names(options.write_roles, write_roles),
+        delete_roles=_role_names(options.delete_roles, delete_roles),
+    )
+    options.registry.register(registered)
 
 
 async def _enforce_if_match(
@@ -480,6 +539,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     stats_enabled: bool = False,
     bulk_rate_limit: RateLimit | None = None,
     stats_cache: StatsCache | None = None,
+    manifest: ManifestOptions | None = None,
 ) -> APIRouter:
     """Build the standard list/create/get/update/delete JSON router for one resource.
 
@@ -540,10 +600,35 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     craftainer_crud.views.stats.PredictionView)
     -- both gated by the same `read_roles` dependency as the plain `GET` list
     route.
+
+    `manifest`, when given, records this router in `manifest.registry` so it appears in
+    `GET .../_crud/manifest` (see craftainer_crud.manifest). `manifest.base_path` must
+    then name this router's collection URL, which the factory cannot know from `prefix`
+    alone (the host decides where it mounts the router); the entry lists the JSON
+    format only. `build_resource_router` fills it in itself.
     """
     router = APIRouter(prefix=prefix, tags=list(tags), dependencies=list(router_dependencies))
     rate_limit = _rate_limited(bulk_rate_limit)
     not_found = f"{resource_label} not found"
+    if manifest is not None:
+        if manifest.base_path is None:
+            raise ValueError("manifest.base_path is required for build_json_router")
+        _register_manifest(
+            manifest,
+            base_path=manifest.base_path,
+            formats={"json": manifest.base_path},
+            schema=schema,
+            create_schema=create_schema,
+            update_schema=update_schema,
+            draft_schema=draft_schema,
+            archivable=archivable,
+            revisions=revision_repository_dependency is not None and resource is not None,
+            events_resource=_events_label(event_source_dependency, resource, manifest),
+            stats=stats_enabled,
+            read_roles=read_roles,
+            write_roles=write_roles,
+            delete_roles=delete_roles,
+        )
 
     @router.get("", dependencies=[read_roles])
     async def list_records(
@@ -552,7 +637,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
         response: Response,
         id: int | None = None,  # noqa: A002
         skip: int = 0,
-        limit: Annotated[int, Query(le=_MAX_LIMIT)] = 100,
+        limit: Annotated[int, Query(le=MAX_LIMIT)] = DEFAULT_LIMIT,
     ) -> schema | list[schema]:  # type: ignore[valid-type]
         result = await resolve_list_or_get(
             crud, schema, request, id=id, skip=skip, limit=limit, not_found=not_found
@@ -672,7 +757,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
                     FilterClause("record_id", FilterOp.EQ, id),
                 ],
                 sort=[SortClause("created_at", descending=True)],
-                limit=_MAX_LIMIT,
+                limit=MAX_LIMIT,
             )
             return [RevisionView.model_validate(record) for record in records]
 
@@ -871,7 +956,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
         response: Response,
         id: int | None = None,  # noqa: A002
         skip: int = 0,
-        limit: Annotated[int, Query(le=_MAX_LIMIT)] = 100,
+        limit: Annotated[int, Query(le=MAX_LIMIT)] = DEFAULT_LIMIT,
     ) -> Response:
         result = await resolve_list_or_get(
             crud, schema, request, id=id, skip=skip, limit=limit, not_found=not_found
@@ -1031,7 +1116,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
                     FilterClause("record_id", FilterOp.EQ, id),
                 ],
                 sort=[SortClause("created_at", descending=True)],
-                limit=_MAX_LIMIT,
+                limit=MAX_LIMIT,
             )
             revisions = [RevisionView.model_validate(record) for record in records]
             revisions_xml = "".join(to_xml(r, "revision") for r in revisions)
@@ -1288,6 +1373,7 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
     stats_enabled: bool = False,
     bulk_rate_limit: RateLimit | None = None,
     stats_cache: StatsCache | None = None,
+    manifest: ManifestOptions | None = None,
 ) -> APIRouter:
     """Compose build_json_router/build_xml_router/build_web_router into one resource-version router.
 
@@ -1319,8 +1405,32 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
     applied to the JSON and XML bulk-action routes; None leaves them unlimited.
 
     `stats_cache` is forwarded to the JSON and XML factories; see build_json_router.
+
+    `manifest`, when given, records this resource version in `manifest.registry` with
+    the JSON, XML and web formats mounted under `api_prefix` (see craftainer_crud.manifest).
     """
     full_prefix = prefix if api_prefix is None else api_prefix
+    if manifest is not None:
+        _register_manifest(
+            manifest,
+            base_path=f"{full_prefix}/json",
+            formats={
+                "json": f"{full_prefix}/json",
+                "xml": f"{full_prefix}/xml",
+                "web": f"{full_prefix}/web",
+            },
+            schema=schema,
+            create_schema=create_schema,
+            update_schema=update_schema,
+            draft_schema=draft_schema,
+            archivable=archivable,
+            revisions=revision_repository_dependency is not None,
+            events_resource=_events_label(event_source_dependency, resource, manifest),
+            stats=stats_enabled,
+            read_roles=read_roles,
+            write_roles=write_roles,
+            delete_roles=delete_roles,
+        )
     router = APIRouter(prefix=prefix, tags=list(tags), dependencies=list(router_dependencies))
     router.include_router(
         build_json_router(

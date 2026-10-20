@@ -256,6 +256,36 @@ records, so it has none.
   that one.
 - **Bulk actions** (no `?id=`) are unconditional: `If-Match` is ignored.
 
+## CRUD manifest routes
+
+`crud_manifest.py` serves the manifest (`docs/manifest.md`) the router factories
+registered into a `ManifestRegistry`:
+
+- `crud_manifest_router(registry, *, service_name, service_version, stats_ttl=None,
+  oidc_discovery_url=None, prefix="/api/_crud")` serves `GET <prefix>/manifest`.
+  `stats_ttl` is host input (the library cannot see the app's stats cache TTL).
+- `api_catalog_router(*, manifest_url, openapi_url="/openapi.json", anchor=None)`
+  serves `GET /.well-known/api-catalog` (RFC 9727 linkset, no auth); mount it at the
+  app root. `anchor` defaults to the request's base URL.
+- A router joins the manifest through `manifest=ManifestOptions(...)` on
+  `build_resource_router` (JSON, XML and web formats under `api_prefix`) or
+  `build_json_router` (JSON only; `manifest.base_path` names its collection URL).
+  Optional routes, `events.resource` and the schemas come from the factory's own
+  arguments. What the factory cannot see is host input in `ManifestOptions`:
+  `name`/`api_version`, `model` (`capabilities.schedulable` is
+  `issubclass(model, Schedulable)`), `owner_scoped`, `public_read`, and the role
+  names (or a `roles` attribute on the role dependency's callable).
+- **Caller filtering:** each resource's `read_roles` dependency is solved for the
+  manifest request (with the app's `dependency_overrides`; shared sub-dependencies run
+  once). A 401 or 403 omits the resource; any other error propagates. `public_read`
+  resources are listed for everyone.
+- **Conditional requests:** the weak `ETag` is a digest of the caller-filtered body, so
+  callers who see different resources get different tags; a matching `If-None-Match`
+  gets a bodiless `304`, with `Cache-Control: private, no-cache` (the same helpers
+  as the record routes, see "Conditional requests").
+- Registering one `(name, api_version)` twice raises `ValueError`; v1 and v2 of one
+  name are two entries.
+
 ## Do
 
 - Add a resource-agnostic router-building helper (usable by any future
