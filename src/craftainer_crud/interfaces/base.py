@@ -350,14 +350,26 @@ class InMemoryEventSink:
     MQTTEventSink/MQTTEventSource-backed path.
     """
 
-    def __init__(self) -> None:
-        """Start with no subscribers."""
+    def __init__(self, resource: str | None = None) -> None:
+        """Start with no subscribers.
+
+        `resource` scopes the sink the way MQTTEventSource scopes by topic: when set,
+        `publish()` drops events for any other resource. The default `None` broadcasts
+        every published event to every subscriber, for callers that build their own
+        sink. craftainer_crud.interfaces.dependency always builds one scoped sink per
+        resource label, so routers sharing a label share one stream.
+        """
+        self._resource = resource
         self._queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
 
     async def publish(
         self, *, resource: str, record_id: int, action: str, snapshot: dict[str, Any]
     ) -> None:
-        """Push one event onto every currently-subscribed queue for `resource`."""
+        """Push one event onto every currently-subscribed queue, unless this sink is
+        scoped to a different resource, in which case the event is dropped.
+        """
+        if self._resource is not None and resource != self._resource:
+            return
         envelope = _event_envelope(
             resource=resource, record_id=record_id, action=action, snapshot=snapshot
         )
