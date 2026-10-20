@@ -1,0 +1,911 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://craftainer.github.io/schemas/crud-manifest/v1",
+  "title": "Craftainer CRUD manifest, version 1",
+  "description": "Clients MUST ignore members they do not understand; adding an optional member does not change manifest_version. What GET /api/_crud/manifest returns: the resources the caller may read, and exactly what the server accepts for each. See docs/manifest.md.",
+  "type": "object",
+  "required": [
+    "manifest_version",
+    "service",
+    "resources"
+  ],
+  "properties": {
+    "manifest_version": {
+      "const": "1",
+      "description": "Contract version. A breaking change publishes a new value and a new $id."
+    },
+    "service": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "resources": {
+      "type": "array",
+      "description": "Only resources the caller may read. Resource identity is (name, api_version), unique within the array.",
+      "items": {
+        "$ref": "#/$defs/resource"
+      }
+    }
+  },
+  "$defs": {
+    "resource": {
+      "type": "object",
+      "required": [
+        "name",
+        "title",
+        "api_version",
+        "base_path",
+        "formats",
+        "id_field",
+        "schemas",
+        "fields",
+        "pagination",
+        "capabilities",
+        "paths",
+        "bulk",
+        "auth",
+        "cache"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Resource name, e.g. heroes."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "api_version": {
+          "type": "string",
+          "pattern": "^v[0-9]+$",
+          "description": "Resource version, e.g. v2. name + api_version identify the resource."
+        },
+        "base_path": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "Collection URL path of the JSON API (the router's /json mount). Every record route hangs off it."
+        },
+        "formats": {
+          "type": "object",
+          "required": [
+            "json"
+          ],
+          "description": "Format -> root path. json is always present and equals base_path.",
+          "properties": {
+            "json": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the same origin."
+            },
+            "xml": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the same origin."
+            },
+            "web": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the same origin."
+            }
+          }
+        },
+        "id_field": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schemas": {
+          "type": "object",
+          "required": [
+            "read",
+            "create",
+            "update",
+            "draft"
+          ],
+          "properties": {
+            "read": {
+              "type": "object",
+              "description": "A self-contained JSON Schema (draft 2020-12) document; internal $defs/$ref only."
+            },
+            "create": {
+              "type": "object",
+              "description": "A self-contained JSON Schema (draft 2020-12) document; internal $defs/$ref only."
+            },
+            "update": {
+              "type": "object",
+              "description": "A self-contained JSON Schema (draft 2020-12) document; internal $defs/$ref only."
+            },
+            "draft": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "description": "A self-contained JSON Schema (draft 2020-12) document; internal $defs/$ref only."
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Null unless capabilities.draft_publish."
+            }
+          }
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/field"
+          },
+          "description": "The filterable/sortable fields only (what field_specs yields). Other record fields appear in schemas.read."
+        },
+        "pagination": {
+          "type": "object",
+          "required": [
+            "style",
+            "skip_param",
+            "limit_param",
+            "sort_param",
+            "default_limit",
+            "max_limit",
+            "total"
+          ],
+          "properties": {
+            "style": {
+              "const": "offset"
+            },
+            "skip_param": {
+              "type": "string"
+            },
+            "limit_param": {
+              "type": "string"
+            },
+            "sort_param": {
+              "type": "string"
+            },
+            "default_limit": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_limit": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "total": {
+              "type": "boolean",
+              "description": "Whether list responses carry a total count (false in v1)."
+            }
+          }
+        },
+        "capabilities": {
+          "type": "object",
+          "required": [
+            "bulk_update",
+            "bulk_delete",
+            "clone",
+            "draft_publish",
+            "archive_restore",
+            "revisions",
+            "events",
+            "stats",
+            "predict",
+            "conditional_requests",
+            "owner_scoped",
+            "schedulable"
+          ],
+          "properties": {
+            "bulk_update": {
+              "type": "boolean"
+            },
+            "bulk_delete": {
+              "type": "boolean"
+            },
+            "clone": {
+              "type": "boolean"
+            },
+            "draft_publish": {
+              "type": "boolean"
+            },
+            "archive_restore": {
+              "type": "boolean"
+            },
+            "revisions": {
+              "type": "boolean"
+            },
+            "events": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/events"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stats": {
+              "type": "boolean"
+            },
+            "predict": {
+              "type": "boolean"
+            },
+            "conditional_requests": {
+              "type": "boolean",
+              "description": "ETag / If-None-Match / If-Match supported."
+            },
+            "owner_scoped": {
+              "type": "boolean",
+              "description": "Callers see only records they own."
+            },
+            "schedulable": {
+              "type": "boolean",
+              "description": "The model is Schedulable: publish_at/unpublish_at exist and ?include_unpublished=true is honoured."
+            }
+          }
+        },
+        "paths": {
+          "type": "object",
+          "required": [
+            "filters",
+            "clone"
+          ],
+          "description": "Absolute paths of the sub-routes. A key is present exactly when its capability is on.",
+          "properties": {
+            "filters": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the same origin."
+            },
+            "stats": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the same origin."
+            },
+            "predict": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the same origin."
+            },
+            "revisions": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the same origin."
+            },
+            "clone": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the same origin."
+            },
+            "draft": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the same origin."
+            },
+            "publish": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the same origin."
+            },
+            "restore": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the same origin."
+            },
+            "events": {
+              "type": "string",
+              "pattern": "^/",
+              "description": "Absolute path on the same origin."
+            }
+          }
+        },
+        "bulk": {
+          "type": "object",
+          "required": [
+            "max_matched"
+          ],
+          "properties": {
+            "max_matched": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "A bulk PATCH/DELETE/restore matching more records is refused with 400."
+            }
+          }
+        },
+        "auth": {
+          "type": "object",
+          "required": [
+            "scheme",
+            "oidc_discovery_url",
+            "public_read",
+            "read_roles",
+            "write_roles",
+            "delete_roles"
+          ],
+          "properties": {
+            "scheme": {
+              "const": "bearer"
+            },
+            "oidc_discovery_url": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "format": "uri"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "public_read": {
+              "type": "boolean",
+              "description": "Anonymous callers may read; then read_roles is empty."
+            },
+            "read_roles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "write_roles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            },
+            "delete_roles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "uniqueItems": true
+            }
+          }
+        },
+        "cache": {
+          "type": "object",
+          "required": [
+            "etag",
+            "max_age",
+            "stats_ttl",
+            "stale_while_revalidate",
+            "list_etag",
+            "record_etag",
+            "revalidate_only"
+          ],
+          "properties": {
+            "etag": {
+              "type": "boolean"
+            },
+            "max_age": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "stats_ttl": {
+              "oneOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Server-side TTL of cached /stats and /predict bodies in seconds; null when no stats cache is configured or the TTL is not known."
+            },
+            "stale_while_revalidate": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "list_etag": {
+              "oneOf": [
+                {
+                  "enum": [
+                    "weak",
+                    "strong"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "record_etag": {
+              "oneOf": [
+                {
+                  "enum": [
+                    "weak",
+                    "strong"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "revalidate_only": {
+              "type": "boolean",
+              "description": "Responses are Cache-Control: private, no-cache: store, but revalidate every time."
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "capabilities"
+            ],
+            "properties": {
+              "capabilities": {
+                "properties": {
+                  "stats": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "stats"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "paths": {
+                "required": [
+                  "stats"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "paths": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "stats"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "capabilities"
+            ],
+            "properties": {
+              "capabilities": {
+                "properties": {
+                  "predict": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "predict"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "paths": {
+                "required": [
+                  "predict"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "paths": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "predict"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "capabilities"
+            ],
+            "properties": {
+              "capabilities": {
+                "properties": {
+                  "revisions": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "revisions"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "paths": {
+                "required": [
+                  "revisions"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "paths": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "revisions"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "capabilities"
+            ],
+            "properties": {
+              "capabilities": {
+                "properties": {
+                  "draft_publish": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "draft_publish"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "paths": {
+                "required": [
+                  "draft",
+                  "publish"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "paths": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "draft"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "publish"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "capabilities"
+            ],
+            "properties": {
+              "capabilities": {
+                "properties": {
+                  "archive_restore": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "archive_restore"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "paths": {
+                "required": [
+                  "restore"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "paths": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "restore"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "capabilities"
+            ],
+            "properties": {
+              "capabilities": {
+                "properties": {
+                  "events": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "events"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "paths": {
+                "required": [
+                  "events"
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "paths": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "events"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "capabilities"
+            ],
+            "properties": {
+              "capabilities": {
+                "properties": {
+                  "draft_publish": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "draft_publish"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "schemas": {
+                "properties": {
+                  "draft": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "schemas": {
+                "properties": {
+                  "draft": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "field": {
+      "type": "object",
+      "required": [
+        "name",
+        "value_type",
+        "filter_ops",
+        "sortable",
+        "choices",
+        "numeric",
+        "categorical",
+        "read_only",
+        "required"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value_type": {
+          "enum": [
+            "integer",
+            "number",
+            "date",
+            "datetime",
+            "string",
+            "boolean",
+            "enum"
+          ]
+        },
+        "filter_ops": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "eq",
+              "min",
+              "max",
+              "in",
+              "contains",
+              "icontains",
+              "regex"
+            ]
+          },
+          "description": "Query suffixes: field=v for eq, field__<op>=v otherwise. min/max are inclusive."
+        },
+        "sortable": {
+          "type": "boolean"
+        },
+        "choices": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Allowed values when value_type is enum, otherwise null."
+        },
+        "numeric": {
+          "type": "boolean",
+          "description": "Eligible for numeric /stats aggregates and /predict?field= (plain integer or number only)."
+        },
+        "categorical": {
+          "type": "boolean",
+          "description": "Eligible for a /stats value distribution (boolean or enum)."
+        },
+        "read_only": {
+          "type": "boolean",
+          "description": "Not accepted by schemas.create."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Required by schemas.create."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "value_type": {
+                "const": "enum"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "choices": {
+                "type": "array"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "choices": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "events": {
+      "type": "object",
+      "required": [
+        "transport",
+        "path",
+        "resource",
+        "resume_param",
+        "replay",
+        "keepalive_seconds",
+        "actions"
+      ],
+      "properties": {
+        "transport": {
+          "const": "sse"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^/",
+          "description": "Absolute path on the same origin."
+        },
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The label carried in each event's resource member. Not versioned: v1 and v2 of one model share a stream."
+        },
+        "resume_param": {
+          "type": "string"
+        },
+        "replay": {
+          "enum": [
+            "persistent",
+            "none"
+          ],
+          "description": "persistent: events missed while disconnected are replayed on resume."
+        },
+        "keepalive_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "actions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "create",
+              "update",
+              "delete",
+              "restore"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
