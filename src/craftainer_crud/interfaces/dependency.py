@@ -35,7 +35,7 @@ _mock_event_sinks: dict[str, InMemoryEventSink] = {}
 def _mock_event_sink_for(resource: str) -> InMemoryEventSink:
     """Return the shared InMemoryEventSink for `resource`, creating it on first use."""
     if resource not in _mock_event_sinks:
-        _mock_event_sinks[resource] = InMemoryEventSink()
+        _mock_event_sinks[resource] = InMemoryEventSink(resource=resource)
     return _mock_event_sinks[resource]
 
 

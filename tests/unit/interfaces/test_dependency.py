@@ -69,6 +69,22 @@ def test_mock_mode_event_sink_and_source_share_one_instance_per_resource(
     assert sink is source
 
 
+def test_mock_mode_gives_each_resource_label_its_own_scoped_sink(
+    override_crud_config: CrudConfigOverride,
+) -> None:
+    """Different labels get different sinks, each scoped to its own label."""
+    override_crud_config(use_memory=True)
+    dependency._mock_event_sinks.clear()
+    widget = build_event_sink_provider("widget")()
+    gadget = build_event_sink_provider("gadget")()
+
+    assert isinstance(widget, InMemoryEventSink)
+    assert isinstance(gadget, InMemoryEventSink)
+    assert widget is not gadget
+    assert widget._resource == "widget"
+    assert gadget._resource == "gadget"
+
+
 def test_non_mock_mode_returns_mqtt_backed_sink_and_source(
     override_crud_config: CrudConfigOverride,
 ) -> None:

@@ -829,3 +829,36 @@ async def test_mqtt_event_source_logs_a_failed_disconnect(caplog: pytest.LogCapt
         await asyncio.gather(*pending)
 
     assert "MQTT disconnect failed" in caplog.text
+
+
+async def test_scoped_in_memory_event_sink_drops_a_mismatched_publish() -> None:
+    """A sink scoped to one resource ignores events published for another."""
+    sink = InMemoryEventSink(resource="hero")
+    _, events = await sink.subscribe(None)
+
+    await sink.publish(resource="villain", record_id=9, action="create", snapshot={"id": 9})
+    await sink.publish(resource="hero", record_id=1, action="create", snapshot={"id": 1})
+
+    assert (await events.__anext__())["record_id"] == 1
+
+
+async def test_scoped_in_memory_event_sink_fans_out_matching_events() -> None:
+    """Two subscribers on one scoped sink both receive a matching publish."""
+    sink = InMemoryEventSink(resource="hero")
+    _, first = await sink.subscribe(None)
+    _, second = await sink.subscribe(None)
+
+    await sink.publish(resource="hero", record_id=1, action="create", snapshot={"id": 1})
+
+    assert (await first.__anext__())["record_id"] == 1
+    assert (await second.__anext__())["record_id"] == 1
+
+
+async def test_unscoped_in_memory_event_sink_still_broadcasts_every_resource() -> None:
+    """With resource=None, events for any resource reach every subscriber."""
+    sink = InMemoryEventSink()
+    _, events = await sink.subscribe(None)
+
+    await sink.publish(resource="villain", record_id=9, action="create", snapshot={"id": 9})
+
+    assert (await events.__anext__())["resource"] == "villain"
