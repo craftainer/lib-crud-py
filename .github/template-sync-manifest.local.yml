@@ -1,0 +1,4 @@
+ignore:
+  # The CRUD manifest contract (spec page and JSON Schema) is this package's own.
+  - docs/manifest.md
+  - schemas/
