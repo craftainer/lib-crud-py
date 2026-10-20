@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from craftainer_tool_crud.views.base import IXDTFDatetime, ORMView
+from craftainer_crud.views.base import IXDTFDatetime, ORMView
 
 
 class RevisionView(ORMView):

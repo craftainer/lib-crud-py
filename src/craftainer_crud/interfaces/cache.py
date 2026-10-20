@@ -1,7 +1,7 @@
 """Opt-in shared cache for the generic `/stats` and `/predict` routes.
 
 A small Protocol, the same opt-in shape as `RevisionSink`/`EventSink` in
-`base.py`: `craftainer_tool_crud` never depends on Redis (or any cache
+`base.py`: `craftainer_crud` never depends on Redis (or any cache
 library). The host supplies an implementation (see `app.cache.RedisStatsCache`)
 and passes it to the router factories as `stats_cache=`; `None` (the default)
 changes nothing.

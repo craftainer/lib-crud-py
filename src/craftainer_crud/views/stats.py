@@ -1,22 +1,22 @@
 """Response shapes for the generic `GET <prefix>/stats`/`GET <prefix>/predict` routes.
 
 Plain `BaseModel`s, not `ORMView` subclasses (see bulk.py's own docstring for
-why): these wrap an already-computed craftainer_tool_crud.repositories.stats.ResourceStats /
-craftainer_tool_crud.controllers.crud_stats.Prediction, not a raw ORM instance
-craftainer_tool_crud.interfaces.
+why): these wrap an already-computed craftainer_crud.repositories.stats.ResourceStats /
+craftainer_crud.controllers.crud_stats.Prediction, not a raw ORM instance
+craftainer_crud.interfaces.
 base.CRUDInterface builds one of via `from_attributes`.
 
 Flat, list-of-item sub-models (`NumericFieldStatView`/`CategoricalValueCountView`/
 `TimeBucketCountView`) rather than a dict-keyed-by-field-name shape -- this is
-what lets craftainer_tool_crud.controllers.crud_router's XML router render each row as its own
-flat model via craftainer_tool_crud.xml_codec.to_xml (which only supports scalar/flat-list
+what lets craftainer_crud.controllers.crud_router's XML router render each row as its own
+flat model via craftainer_crud.xml_codec.to_xml (which only supports scalar/flat-list
 fields, see its own module docstring) and hand-assemble the wrapping tags, the
 same pattern already used for a list of records.
 """
 
 from pydantic import BaseModel
 
-from craftainer_tool_crud.views.base import IXDTFDatetime
+from craftainer_crud.views.base import IXDTFDatetime
 
 
 class NumericFieldStatView(BaseModel):

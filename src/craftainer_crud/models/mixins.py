@@ -1,11 +1,11 @@
 """Opt-in record-lifecycle mixins: archive, draft, scheduled publish, and lock.
 
-Each mixin adds one plain column, following craftainer_tool_crud.models.base.IdentifiedBase's own
+Each mixin adds one plain column, following craftainer_crud.models.base.IdentifiedBase's own
 `created_at`/`updated_at` pattern -- a model opts in with plain multiple
 inheritance (`class Hero(IdentifiedBase, Archivable, Draftable, ...)`), and
-craftainer_tool_crud.repositories/craftainer_tool_crud.interfaces detect which of these a bound
+craftainer_crud.repositories/craftainer_crud.interfaces detect which of these a bound
 model carries via
-`hasattr`, mirroring how craftainer_tool_crud.repositories.memory already special-cases
+`hasattr`, mirroring how craftainer_crud.repositories.memory already special-cases
 `created_at`/`updated_at`. A model that doesn't inherit a mixin is completely
 unaffected -- no shared base class changes, no new required column anywhere else.
 
@@ -24,7 +24,7 @@ class Archivable:
     `None` means "active"; a timestamp means "archived at that time". Repository
     delete/delete_many set this instead of issuing a real DELETE for a model
     carrying this column, and list/get/count exclude archived rows by default
-    -- see craftainer_tool_crud.repositories.sqlalchemy/craftainer_tool_crud.repositories.memory.
+    -- see craftainer_crud.repositories.sqlalchemy/craftainer_crud.repositories.memory.
     """
 
     archived_at: Mapped[datetime | None] = mapped_column(default=None)
@@ -34,7 +34,7 @@ class Draftable:
     """Mixin adding an `is_draft` flag, defaulting to True.
 
     A plain, filterable/sortable column -- no repository/interface changes are
-    needed for draft itself; see craftainer_tool_crud.controllers.crud_router's `/draft`/`/publish`
+    needed for draft itself; see craftainer_crud.controllers.crud_router's `/draft`/`/publish`
     routes for the create-partial/complete-and-publish flow built on top of it.
 
     Unlike Archivable, a plain unfiltered `GET <prefix>` includes drafts by
@@ -49,7 +49,7 @@ class Draftable:
     docs/adrs/0011-owner-scoped-crud-example-resource.md used for ownership
     scoping.
 
-    Interaction with craftainer_tool_crud.interfaces.base.OwnerScope: Hero combines both (see
+    Interaction with craftainer_crud.interfaces.base.OwnerScope: Hero combines both (see
     app.crud_1.heroes.heroes_v2.get_hero_crud), but with `read_scoped=False`,
     so every caller already sees every hero -- including every draft -- and
     "does a caller's own drafts stay visible to them specifically" never comes
@@ -67,7 +67,7 @@ class Schedulable:
     """Mixin adding `publish_at`/`unpublish_at`, both defaulting to None (unscheduled).
 
     Visibility is computed live at read time from these two columns (see
-    craftainer_tool_crud.repositories.sqlalchemy/craftainer_tool_crud.repositories.memory's
+    craftainer_crud.repositories.sqlalchemy/craftainer_crud.repositories.memory's
     default-exclusion
     logic) -- no background job ever needs to touch the row.
     """
@@ -79,7 +79,7 @@ class Schedulable:
 class Lockable:
     """Mixin adding an `is_locked` flag, defaulting to False.
 
-    Enforced in the repository layer (see craftainer_tool_crud.repositories.base.RecordLockedError)
+    Enforced in the repository layer (see craftainer_crud.repositories.base.RecordLockedError)
     so it's atomic with the mutation itself -- update/update_many/delete/delete_many
     refuse to touch a locked row, except an update whose own data sets
     `is_locked=False` and nothing else.

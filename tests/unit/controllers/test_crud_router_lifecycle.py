@@ -12,14 +12,14 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from craftainer_tool_crud.controllers.crud_router import (
+from craftainer_crud.controllers.crud_router import (
     build_json_router,
     build_web_router,
     build_xml_router,
 )
-from craftainer_tool_crud.interfaces.base import CRUDInterface, OwnerScope, RepositoryRevisionSink
-from craftainer_tool_crud.models.revision import Revision
-from craftainer_tool_crud.repositories.memory import InMemoryRepository
+from craftainer_crud.interfaces.base import CRUDInterface, OwnerScope, RepositoryRevisionSink
+from craftainer_crud.models.revision import Revision
+from craftainer_crud.repositories.memory import InMemoryRepository
 from tests.support.hero_model import Hero
 from tests.support.hero_views import HeroV2, HeroV2Create, HeroV2Update
 

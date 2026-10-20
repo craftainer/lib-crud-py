@@ -1,6 +1,6 @@
 """Runtime injection point for the host application's engine and settings.
 
-`craftainer_tool_crud` never reads application settings or builds a database
+`craftainer_crud` never reads application settings or builds a database
 engine itself. The host calls `configure(...)` once at startup, before the first
 request, passing an `async_sessionmaker` (it owns the engine) and a `CrudConfig`.
 Until then `get_config()` returns the defaults below and `get_session_factory()`
@@ -27,7 +27,7 @@ class MQTTConfig:
 
 @dataclass(frozen=True, slots=True)
 class CrudConfig:
-    """Everything `craftainer_tool_crud` needs from its host, besides the session factory."""
+    """Everything `craftainer_crud` needs from its host, besides the session factory."""
 
     use_memory: bool = False
     """True selects the in-memory repository/event bus instead of SQLAlchemy/MQTT (mock mode)."""
@@ -61,9 +61,9 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
     The raise is `# pragma: no cover` for tests/e2e specifically: its one live process
     is always configured, so the branch can never run there --
-    tests/unit/craftainer_tool_crud/test_config.py covers it directly.
+    tests/unit/craftainer_crud/test_config.py covers it directly.
     """
     if _session_factory is None:  # pragma: no cover -- see docstring
-        msg = "craftainer_tool_crud.config.configure(...) must be called with a session factory"
+        msg = "craftainer_crud.config.configure(...) must be called with a session factory"
         raise RuntimeError(msg)
     return _session_factory

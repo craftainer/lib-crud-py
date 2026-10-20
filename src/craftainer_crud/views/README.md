@@ -5,7 +5,7 @@ Generic Pydantic view bases and response shapes a resource's own views
 
 - `base.py` — `ORMView`, the base every view inherits from
   (`model_config = ConfigDict(from_attributes=True)`, which is what lets
-  `craftainer_tool_crud.interfaces.base.CRUDInterface` build one straight from a SQLAlchemy
+  `craftainer_crud.interfaces.base.CRUDInterface` build one straight from a SQLAlchemy
   model instance via `model_validate`), and `IXDTFDatetime` (see below).
 - `bulk.py` — `BulkUpdateResult`/`BulkDeleteResult`, the response shape
   for a bulk update/delete action (matched count plus the ids affected).
@@ -20,8 +20,8 @@ Generic Pydantic view bases and response shapes a resource's own views
   `CategoricalValueCountView`/`TimeBucketCountView`/`LifecycleStatsView`/
   `ResourceStatsView`/`PredictionView`), flat list-of-item sub-models
   rather than a dict-keyed-by-field-name shape — this is what lets
-  `craftainer_tool_crud.controllers.crud_router`'s XML router render each row as its own
-  flat model via `craftainer_tool_crud.xml_codec.to_xml` (which only supports scalar/
+  `craftainer_crud.controllers.crud_router`'s XML router render each row as its own
+  flat model via `craftainer_crud.xml_codec.to_xml` (which only supports scalar/
   flat-list fields) and hand-assemble the wrapping tags, the same
   pattern already used for a list of records.
 
@@ -37,11 +37,11 @@ but HTTP-date-formatted, `Sunset` header.
 ## Do
 
 - Subclass `ORMView`, not `pydantic.BaseModel` directly, for any view
-  `craftainer_tool_crud.interfaces.base.CRUDInterface` will build from an ORM instance.
+  `craftainer_crud.interfaces.base.CRUDInterface` will build from an ORM instance.
 
 ## Don't
 
-- Import from `craftainer_tool_crud.repositories`, `craftainer_tool_crud.interfaces`, or `crud.
+- Import from `craftainer_crud.repositories`, `craftainer_crud.interfaces`, or `crud.
   controllers` — see `../README.md`'s "Layering" section. A view
   converts to/from an ORM instance structurally (`from_attributes`),
   never by importing the model class.

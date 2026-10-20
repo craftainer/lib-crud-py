@@ -3,8 +3,8 @@
 from collections.abc import Sequence
 from typing import Any, Protocol
 
-from craftainer_tool_crud.repositories.filtering import FilterClause, SortClause
-from craftainer_tool_crud.repositories.stats import ResourceStats, TimeBucket
+from craftainer_crud.repositories.filtering import FilterClause, SortClause
+from craftainer_crud.repositories.stats import ResourceStats, TimeBucket
 
 
 class RecordLockedError(Exception):
@@ -12,8 +12,8 @@ class RecordLockedError(Exception):
 
     Raised when the existing row's `is_locked` is True and the mutation isn't the
     one explicit escape hatch: an `update`/`update_many` call whose own `data` sets
-    `is_locked=False`. craftainer_tool_crud.controllers.crud_actions catches this and raises
-    HTTPException(423) -- see craftainer_tool_crud.models.mixins.Lockable.
+    `is_locked=False`. craftainer_crud.controllers.crud_actions catches this and raises
+    HTTPException(423) -- see craftainer_crud.models.mixins.Lockable.
     """
 
 
@@ -25,7 +25,7 @@ class Repository[ModelT](Protocol):
     ) -> ModelT | None:
         """Return the record with the given id, or None if it doesn't exist.
 
-        For a model carrying craftainer_tool_crud.models.mixins.Archivable/Schedulable, an archived
+        For a model carrying craftainer_crud.models.mixins.Archivable/Schedulable, an archived
         or not-yet-/no-longer-published record is treated as not found unless the
         matching `include_*` flag is set.
         """
@@ -75,7 +75,7 @@ class Repository[ModelT](Protocol):
     async def delete(self, record_id: int) -> bool:
         """Delete the record with the given id; return whether it existed.
 
-        For a model carrying craftainer_tool_crud.models.mixins.Archivable, this sets `archived_at`
+        For a model carrying craftainer_crud.models.mixins.Archivable, this sets `archived_at`
         instead of issuing a real delete. Raises RecordLockedError for a Lockable
         record whose `is_locked` is True.
         """
@@ -124,9 +124,9 @@ class Repository[ModelT](Protocol):
 
         `numeric_fields`/`categorical_fields` name which columns to compute
         min/max/avg/sum and value-distribution counts for, respectively (see
-        craftainer_tool_crud.controllers.crud_stats for how these are derived from a resource's
+        craftainer_crud.controllers.crud_stats for how these are derived from a resource's
         schema). `bucket`, if given, additionally computes a time-bucketed count
-        series over `created_at`. A model carrying one of craftainer_tool_crud.models.mixins'
+        series over `created_at`. A model carrying one of craftainer_crud.models.mixins'
         record-lifecycle mixins (detected via `hasattr`, same as `list`/`get`/
         `count`) also gets a lifecycle breakdown; a model with none of them gets
         `lifecycle=None`. See `get`'s docstring for `include_archived`/

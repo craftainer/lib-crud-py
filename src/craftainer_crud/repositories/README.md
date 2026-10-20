@@ -1,9 +1,9 @@
 # crud/repositories/
 
-Storage-agnostic CRUD access that `craftainer_tool_crud.interfaces`'s generic interface talks
+Storage-agnostic CRUD access that `craftainer_crud.interfaces`'s generic interface talks
 to, parameterized by a model type rather than one class per resource.
 
-- `base.py` — `Repository[ModelT]`, the `Protocol` `craftainer_tool_crud.interfaces.base.
+- `base.py` — `Repository[ModelT]`, the `Protocol` `craftainer_crud.interfaces.base.
   CRUDInterface` is written against: `get`/`list`/`create`/`update`/
   `delete`/`count`/`update_many`/`delete_many`/`restore`/`restore_many`/
   `stats`, all storage-agnostic. `list`/`update_many`/`delete_many` take
@@ -19,11 +19,11 @@ to, parameterized by a model type rather than one class per resource.
   field to sort by). Plain value objects with no SQLAlchemy or
   Python-eval logic — each concrete repository below interprets them
   itself, the same way `Repository` stays a `Protocol` with no shared
-  implementation. `craftainer_tool_crud.controllers.crud_query` is the only place that
+  implementation. `craftainer_crud.controllers.crud_query` is the only place that
   turns an HTTP query string into these (see its own module docstring for
   the wire format); a repository never parses a query string itself.
 - `sqlalchemy.py` — `SQLAlchemyRepository[ModelT]`, the default concrete
-  implementation: bound to an `AsyncSession` and a `craftainer_tool_crud.models.base.
+  implementation: bound to an `AsyncSession` and a `craftainer_crud.models.base.
   IdentifiedBase` subclass in its constructor, not hardcoded to one
   resource. Translates `FilterClause`/`SortClause` into SQLAlchemy Core
   `where()`/`order_by()` terms via its private `_where_clauses`/
@@ -86,7 +86,7 @@ isn't given), and — for a model carrying one of the mixins above — a
 scheduled-expired counts, each `None` if the matching mixin isn't
 present; `lifecycle=None` entirely for a model with none of them).
 `numeric_fields`/`categorical_fields` are caller-supplied (see
-`craftainer_tool_crud.controllers.crud_stats` for how a resource's own schema derives
+`craftainer_crud.controllers.crud_stats` for how a resource's own schema derives
 them) — this method has no opinion on which fields "should" be
 aggregated, only how to aggregate the ones it's given.
 
@@ -122,9 +122,9 @@ with none of them gets `lifecycle=None` entirely.
 
 ## Don't
 
-- Import from `craftainer_tool_crud.interfaces` or `craftainer_tool_crud.controllers` — see
-  `../README.md`'s "Layering" section. `craftainer_tool_crud.models` is fine
+- Import from `craftainer_crud.interfaces` or `craftainer_crud.controllers` — see
+  `../README.md`'s "Layering" section. `craftainer_crud.models` is fine
   (`SQLAlchemyRepository` is generic over `IdentifiedBase`).
 - Give `SQLAlchemyRepository` resource-specific logic — anything a
-  particular resource needs belongs in `craftainer_tool_crud.interfaces` or the
+  particular resource needs belongs in `craftainer_crud.interfaces` or the
   resource's own controller calling it, not here.

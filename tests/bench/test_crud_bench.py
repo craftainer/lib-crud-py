@@ -10,11 +10,11 @@ from fastapi.testclient import TestClient
 from pytest_benchmark.fixture import BenchmarkFixture
 from starlette.datastructures import QueryParams
 
-from craftainer_tool_crud.controllers.crud_query import parse_filters
-from craftainer_tool_crud.controllers.crud_router import build_json_router
-from craftainer_tool_crud.interfaces.base import CRUDInterface
-from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
-from craftainer_tool_crud.repositories.memory import InMemoryRepository
+from craftainer_crud.controllers.crud_query import parse_filters
+from craftainer_crud.controllers.crud_router import build_json_router
+from craftainer_crud.interfaces.base import CRUDInterface
+from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
+from craftainer_crud.repositories.memory import InMemoryRepository
 from tests.support.hero_model import Hero
 from tests.support.hero_views import HeroV2, HeroV2Create, HeroV2Update
 

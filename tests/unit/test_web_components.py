@@ -1,6 +1,6 @@
 """Unit test: the generic HTML form and web-component JS templates."""
 
-from craftainer_tool_crud.web_components import render_crud_component_js, render_crud_form
+from craftainer_crud.web_components import render_crud_component_js, render_crud_form
 
 
 def test_render_crud_form_includes_an_input_per_field() -> None:

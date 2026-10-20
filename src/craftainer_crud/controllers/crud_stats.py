@@ -1,6 +1,6 @@
 """Query parsing and OLS forecasting shared by the generic `/stats`/`/predict` routes.
 
-Numeric/categorical field classification reuses craftainer_tool_crud.controllers.crud_query.
+Numeric/categorical field classification reuses craftainer_crud.controllers.crud_query.
 field_specs -- the single source of truth for what "kind" a schema field is --
 but narrows FieldKind.NUMBER (which also covers date/datetime fields, for
 range-filtering purposes -- see crud_query's own module docstring) down to
@@ -17,7 +17,7 @@ docs/plans/2026-09-crud-stats-and-predictions.md's "Predictions" scope decision
 for why: no new heavy dependency, no trained-model storage/retraining/
 versioning concerns, consistent with this template's low-dependency style.
 Deliberately generic over *what* series is being forecast (`BucketValue`, a
-plain bucket_start/float pair) rather than tied to craftainer_tool_crud.repositories.stats.
+plain bucket_start/float pair) rather than tied to craftainer_crud.repositories.stats.
 TimeBucketCount's integer `count`: the default (no `field` given) forecasts a
 bucketed record-count series (`count_series_as_values` below adapts
 Repository.stats's own `time_series`); a `field`-targeted forecast instead sums
@@ -38,8 +38,8 @@ from typing import Any
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 
-from craftainer_tool_crud.controllers.crud_query import FieldKind, field_specs
-from craftainer_tool_crud.repositories.stats import TimeBucket, TimeBucketCount
+from craftainer_crud.controllers.crud_query import FieldKind, field_specs
+from craftainer_crud.repositories.stats import TimeBucket, TimeBucketCount
 
 # A predicted series longer than this would be a near-meaningless naive linear
 # projection anyway -- caps the request the same way crud_router._MAX_LIMIT caps
@@ -70,7 +70,7 @@ def cache_scope(crud: object) -> str:
     owner = getattr(inner, "_owner", None)
     if owner is None or not owner.read_scoped:
         return "shared"
-    # e2e-unreachable: Hero is read_scoped=False; covered by tests/unit/craftainer_tool_crud/
+    # e2e-unreachable: Hero is read_scoped=False; covered by tests/unit/craftainer_crud/
     # controllers/test_crud_router_stats_cache.py
     return f"owner:{owner.field}={owner.value}"  # pragma: no cover
 
@@ -100,7 +100,7 @@ def cache_key(*, kind: str, schema: type[BaseModel], scope: str, params: Mapping
 class InsufficientHistoryError(Exception):
     """Raised by forecast() when fewer than 2 time buckets of history exist.
 
-    craftainer_tool_crud.controllers.crud_router's `/predict` route catches this and re-raises it
+    craftainer_crud.controllers.crud_router's `/predict` route catches this and re-raises it
     as a 422 RequestValidationError, the same status/shape every other
     caller-input problem in this layer uses (see e.g. crud_query.parse_filters).
     """
@@ -198,7 +198,7 @@ def bucket_field_sums(
 def _bucket_start(bucket: TimeBucket, value: datetime) -> datetime:
     """Truncate `value` to the start of its UTC calendar bucket.
 
-    Mirrors craftainer_tool_crud.repositories.memory's own `_bucket_start` helper.
+    Mirrors craftainer_crud.repositories.memory's own `_bucket_start` helper.
     """
     day_start = value.replace(hour=0, minute=0, second=0, microsecond=0)
     if bucket is TimeBucket.DAY:

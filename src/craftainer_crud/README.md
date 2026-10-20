@@ -1,4 +1,4 @@
-# craftainer_tool_crud/
+# craftainer_crud/
 
 The generic CRUD framework a host application's resource packages build on —
 router factories, the CRUD interface, storage-agnostic repositories, and

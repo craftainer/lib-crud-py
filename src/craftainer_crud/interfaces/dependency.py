@@ -7,18 +7,18 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from craftainer_tool_crud.config import MQTTConfig, get_config
-from craftainer_tool_crud.interfaces.base import (
+from craftainer_crud.config import MQTTConfig, get_config
+from craftainer_crud.interfaces.base import (
     EventSink,
     EventSource,
     InMemoryEventSink,
     MQTTEventSink,
     MQTTEventSource,
 )
-from craftainer_tool_crud.models.base import IdentifiedBase
-from craftainer_tool_crud.repositories.base import Repository
-from craftainer_tool_crud.repositories.memory import InMemoryRepository
-from craftainer_tool_crud.repositories.sqlalchemy import SQLAlchemyRepository
+from craftainer_crud.models.base import IdentifiedBase
+from craftainer_crud.repositories.base import Repository
+from craftainer_crud.repositories.memory import InMemoryRepository
+from craftainer_crud.repositories.sqlalchemy import SQLAlchemyRepository
 
 # One InMemoryEventSink per resource, built lazily and shared by both
 # build_event_sink_provider and build_event_source_provider for that resource --

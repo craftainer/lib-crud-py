@@ -9,8 +9,8 @@ from contextlib import contextmanager
 
 from sqlalchemy import event
 
-from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp
-from craftainer_tool_crud.repositories.sqlalchemy import SQLAlchemyRepository
+from craftainer_crud.repositories.filtering import FilterClause, FilterOp
+from craftainer_crud.repositories.sqlalchemy import SQLAlchemyRepository
 from tests.integration.db import engine
 from tests.integration.db import session_factory as async_session_factory
 from tests.support.hero_model import Hero

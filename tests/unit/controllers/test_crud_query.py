@@ -14,7 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 from starlette.datastructures import QueryParams
 
-from craftainer_tool_crud.controllers.crud_query import (
+from craftainer_crud.controllers.crud_query import (
     describe_fields,
     field_specs,
     parse_filters,
@@ -22,7 +22,7 @@ from craftainer_tool_crud.controllers.crud_query import (
     parse_include_unpublished,
     parse_sort,
 )
-from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
+from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 
 
 class _Status(Enum):
@@ -121,7 +121,7 @@ def test_parse_filters_datetime_field_normalizes_tz_aware_value_to_naive_utc() -
     """A tz-aware datetime filter value is converted to naive UTC before comparison.
 
     Every timestamp this app stores is naive-but-conceptually-UTC (see
-    craftainer_tool_crud.models.base.IdentifiedBase), so a "+00:00"/"Z"-suffixed filter value has to
+    craftainer_crud.models.base.IdentifiedBase), so a "+00:00"/"Z"-suffixed filter value has to
     be normalized the same way, or the DB driver rejects comparing it to a naive
     column outright.
     """

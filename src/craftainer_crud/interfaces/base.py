@@ -1,14 +1,14 @@
 """Generic CRUD interface.
 
-Feed it a Pydantic view (app.views/craftainer_tool_crud.views) and a Repository
-(craftainer_tool_crud.repositories) to persist
+Feed it a Pydantic view (app.views/craftainer_crud.views) and a Repository
+(craftainer_crud.repositories) to persist
 it through, and it exposes CRUD operations that speak entirely in terms of that
 view -- converting to and from the backing ORM model via the view's own
-`from_attributes` support (see craftainer_tool_crud.views.base.ORMView) is the only place that
+`from_attributes` support (see craftainer_crud.views.base.ORMView) is the only place that
 conversion happens, so a new resource never needs its own CRUD class.
 
 A few branches below are `# pragma: no cover` for the same reason as
-craftainer_tool_crud.repositories.sqlalchemy's module docstring: Hero -- the only resource
+craftainer_crud.repositories.sqlalchemy's module docstring: Hero -- the only resource
 tests/e2e's journeys exercise -- always builds its CRUDInterface with `owner`,
 `revisions`, and `events` all set (see app.crud_1.heroes.heroes_v2.get_hero_crud),
 and `owner.read_scoped=False`, so the `owner is None`/`revisions is None`/
@@ -32,9 +32,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel
 
-from craftainer_tool_crud.repositories.base import Repository
-from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
-from craftainer_tool_crud.repositories.stats import ResourceStats, TimeBucket
+from craftainer_crud.repositories.base import Repository
+from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
+from craftainer_crud.repositories.stats import ResourceStats, TimeBucket
 
 if TYPE_CHECKING:
     import aiomqtt  # only imported at runtime inside the MQTT classes (future `[mqtt]` extra)
@@ -45,8 +45,8 @@ logger = logging.getLogger(__name__)
 class RevisionSink(Protocol):
     """Opt-in append-only revision-history hook for a CRUDInterface.
 
-    A small Protocol (rather than a concrete class) so craftainer_tool_crud.interfaces stays
-    unaware of craftainer_tool_crud.models.revision.Revision's own storage shape -- see
+    A small Protocol (rather than a concrete class) so craftainer_crud.interfaces stays
+    unaware of craftainer_crud.models.revision.Revision's own storage shape -- see
     RepositoryRevisionSink below for the concrete adapter every resource that
     opts in actually uses.
     """
@@ -62,7 +62,7 @@ class RevisionSink(Protocol):
 class RepositoryRevisionSink:
     """RevisionSink backed by a plain Repository[Revision] -- no bespoke storage class needed.
 
-    `craftainer_tool_crud.models.revision.Revision` is just another IdentifiedBase model, so the
+    `craftainer_crud.models.revision.Revision` is just another IdentifiedBase model, so the
     same `Repository[ModelT]`/`build_repository_provider` machinery every other
     resource uses already knows how to persist it (SQLAlchemy-backed in dev/
     production, in-memory under MODE=mock) -- this is a thin adapter from
@@ -92,7 +92,7 @@ class EventSink(Protocol):
     A small Protocol (rather than a concrete class), the same shape as RevisionSink
     above -- see MQTTEventSink/InMemoryEventSink below for the concrete adapters a
     resource that opts in actually uses, and EventSource (below) for the paired
-    subscribe-side Protocol craftainer_tool_crud.controllers.crud_router's `GET <prefix>/events`
+    subscribe-side Protocol craftainer_crud.controllers.crud_router's `GET <prefix>/events`
     route depends on. Deliberately broader in scope than RevisionSink: fired after
     every successful create/update/update_many/delete/delete_many **and**
     restore/restore_many, since a subscriber watching a resource's real-time
@@ -118,7 +118,7 @@ class EventSource(Protocol):
     A small Protocol, structurally distinct from EventSink even though a resource's
     two concrete adapters (MQTTEventSink/MQTTEventSource, or the single
     InMemoryEventSink instance satisfying both) are typically built together and
-    share the same underlying transport -- see craftainer_tool_crud.interfaces.dependency.
+    share the same underlying transport -- see craftainer_crud.interfaces.dependency.
     build_event_sink_provider/build_event_source_provider.
     """
 
@@ -189,9 +189,9 @@ class MQTTEventSink:
     Each `publish()` opens its own `aiomqtt.Client` connection rather than holding one
     open across requests -- aiomqtt.Client binds to the event loop it's constructed on
     (`asyncio.get_running_loop()` in its own `__init__`), which rules out building one
-    eagerly at import time the way craftainer_tool_crud.repositories.memory.InMemoryRepository is
+    eagerly at import time the way craftainer_crud.repositories.memory.InMemoryRepository is
     (see
-    craftainer_tool_crud.interfaces.dependency.build_event_sink_provider). QoS 1 here only
+    craftainer_crud.interfaces.dependency.build_event_sink_provider). QoS 1 here only
     guarantees
     this publish reaches the broker at least once; the "no missed events across a
     disconnect" guarantee (docs/adrs/0015-mqtt-for-crud-events.md) comes from the
@@ -239,7 +239,7 @@ class MQTTEventSource:
     `message_expiry_interval`, see docs/adrs/0015-mqtt-for-crud-events.md) and
     delivers them once the same client id reconnects. The connection is held open
     for as long as the returned iterator is consumed (typically the lifetime of one
-    SSE stream, see craftainer_tool_crud.controllers.crud_router's `GET <prefix>/events`) via the
+    SSE stream, see craftainer_crud.controllers.crud_router's `GET <prefix>/events`) via the
     `async with` inside `_events`, not by this method itself.
     """
 
@@ -259,7 +259,7 @@ class MQTTEventSource:
 
         Connecting and subscribing *here*, before returning, rather than lazily on the
         iterator's first `__anext__()`, is what makes the delivery guarantee this class
-        promises actually hold: craftainer_tool_crud.controllers.crud_router's `_sse_events` sends
+        promises actually hold: craftainer_crud.controllers.crud_router's `_sse_events` sends
         its
         first (`id: 0`) frame -- the caller's signal that `subscriber_id` is now safely
         registered and safe to reconnect with -- as soon as `subscribe()` returns, and
@@ -334,9 +334,9 @@ class MQTTEventSource:
 class InMemoryEventSink:
     """EventSink *and* EventSource for MODE=mock, an asyncio.Queue fan-out per resource.
 
-    One instance is built once and shared (see craftainer_tool_crud.interfaces.dependency.
+    One instance is built once and shared (see craftainer_crud.interfaces.dependency.
     build_event_sink_provider/build_event_source_provider), matching how
-    craftainer_tool_crud.repositories.memory.InMemoryRepository is built once and shared -- a
+    craftainer_crud.repositories.memory.InMemoryRepository is built once and shared -- a
     single instance satisfies both EventSink (`publish`) and EventSource
     (`subscribe`) structurally, since under MODE=mock there's no broker to keep the
     two sides independent through: a `publish()` call needs to reach every
@@ -411,7 +411,7 @@ class OwnerScope:
 
     Deliberately a CRUDInterface-level concept, not a Repository one: passing
     `owner=None` (the default) changes nothing, so a resource that never opts
-    in is unaffected, and craftainer_tool_crud.repositories stays unaware "ownership" exists at
+    in is unaffected, and craftainer_crud.repositories stays unaware "ownership" exists at
     all -- see docs/adrs/0011-owner-scoped-crud-example-resource.md.
     """
 
@@ -427,10 +427,10 @@ class OwnerScope:
 class CRUDLike[SchemaT: BaseModel](Protocol):
     """Structural shape both CRUDInterface and CompatCRUD satisfy.
 
-    Lets craftainer_tool_crud.controllers.crud_router's router factories depend on "anything with
+    Lets craftainer_crud.controllers.crud_router's router factories depend on "anything with
     these methods" rather than concretely on CRUDInterface, so the same
     factory builds both a current-version router (backed by CRUDInterface) and a
-    deprecated one (backed by craftainer_tool_crud.interfaces.compat.CompatCRUD) identically.
+    deprecated one (backed by craftainer_crud.interfaces.compat.CompatCRUD) identically.
     """
 
     async def get(
@@ -592,7 +592,7 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
         `include_archived`/`include_unpublished` override the default Archivable/
         Schedulable exclusion for a model carrying those mixins -- a no-op
         otherwise, see
-        craftainer_tool_crud.repositories.sqlalchemy/craftainer_tool_crud.repositories.memory.
+        craftainer_crud.repositories.sqlalchemy/craftainer_crud.repositories.memory.
         """
         if self._owner is None or not self._owner.read_scoped:
             instance = await self._repository.get(
@@ -644,7 +644,7 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
     ) -> int:
         """Return how many records match the given filters.
 
-        Called by craftainer_tool_crud.controllers.crud_actions before a bulk update/delete, to cap
+        Called by craftainer_crud.controllers.crud_actions before a bulk update/delete, to cap
         how many records a single action can affect.
         """
         return await self._repository.count(
@@ -662,7 +662,7 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
         `exclude_unset=True`: a field the caller genuinely omitted (as opposed to one
         explicitly set to its own default) is left out of `values` entirely, so the
         repository/column's own default applies -- required for a Draftable create
-        (see craftainer_tool_crud.controllers.crud_router's `/draft` route, whose body validates
+        (see craftainer_crud.controllers.crud_router's `/draft` route, whose body validates
         against a resource's all-optional `*Update` view): an omitted non-nullable
         lifecycle field like Lockable's `is_locked` must take its column default
         (e.g. `False`), not an explicit `None`, which every normal create-schema

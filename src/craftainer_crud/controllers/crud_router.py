@@ -1,7 +1,7 @@
 """Generic FastAPI router factories for a resource's CRUD endpoints.
 
 Parameterized by a resource's Pydantic views and an already-built CRUD
-dependency (craftainer_tool_crud.interfaces.base.CRUDLike) -- covers both a current version
+dependency (craftainer_crud.interfaces.base.CRUDLike) -- covers both a current version
 (CRUDInterface) and a deprecated one (CompatCRUD) identically, since
 both satisfy CRUDLike structurally. Each factory builds its route
 functions internally as closures over its arguments: the generated
@@ -12,7 +12,7 @@ signature (every parameter, `-> APIRouter`) stays fully strict-typed,
 so a caller gets real type-checking on the call itself.
 
 Record addressing is a query parameter (`?id=`), not a path segment, on every
-factory here -- see craftainer_tool_crud.controllers.crud_actions for the shared "id present ->
+factory here -- see craftainer_crud.controllers.crud_actions for the shared "id present ->
 single record; otherwise -> filtered list, or a bulk update/delete over the
 given filters" logic each factory's routes wrap in their own response format.
 """
@@ -30,26 +30,26 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, ValidationError
 
-from craftainer_tool_crud.config import get_config
-from craftainer_tool_crud.controllers import crud_stats
-from craftainer_tool_crud.controllers.crud_actions import (
+from craftainer_crud.config import get_config
+from craftainer_crud.controllers import crud_stats
+from craftainer_crud.controllers.crud_actions import (
     resolve_delete,
     resolve_list_or_get,
     resolve_restore,
     resolve_update,
 )
-from craftainer_tool_crud.controllers.crud_query import (
+from craftainer_crud.controllers.crud_query import (
     FieldFilterInfo,
     describe_fields,
     parse_include_archived,
     parse_include_unpublished,
 )
-from craftainer_tool_crud.interfaces.cache import StatsCache
-from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
-from craftainer_tool_crud.repositories.stats import TimeBucket
-from craftainer_tool_crud.views.bulk import BulkDeleteResult, BulkUpdateResult
-from craftainer_tool_crud.views.revision import RevisionView
-from craftainer_tool_crud.views.stats import (
+from craftainer_crud.interfaces.cache import StatsCache
+from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
+from craftainer_crud.repositories.stats import TimeBucket
+from craftainer_crud.views.bulk import BulkDeleteResult, BulkUpdateResult
+from craftainer_crud.views.revision import RevisionView
+from craftainer_crud.views.stats import (
     CategoricalValueCountView,
     LifecycleStatsView,
     NumericFieldStatView,
@@ -58,8 +58,8 @@ from craftainer_tool_crud.views.stats import (
     SeriesPointView,
     TimeBucketCountView,
 )
-from craftainer_tool_crud.web_components import render_crud_component_js, render_crud_form
-from craftainer_tool_crud.xml_codec import from_xml, is_list_annotation, to_xml
+from craftainer_crud.web_components import render_crud_component_js, render_crud_form
+from craftainer_crud.xml_codec import from_xml, is_list_annotation, to_xml
 
 # A route decorator the host supplies for bulk actions (e.g. slowapi's `limiter.limit(...)`),
 # so this package doesn't depend on any rate-limiting library. None means unlimited.
@@ -116,8 +116,8 @@ class _PredictionMetaXML(BaseModel):
     """Flat scalar sub-model for build_xml_router's hand-assembled `/predict` body.
 
     `field`/`bucket`/`method` are the only scalar (non-nested) fields of
-    craftainer_tool_crud.views.stats.PredictionView -- rendered as their own flat model via
-    craftainer_tool_crud.xml_codec.to_xml the same way a numeric-field/categorical-value/
+    craftainer_crud.views.stats.PredictionView -- rendered as their own flat model via
+    craftainer_crud.xml_codec.to_xml the same way a numeric-field/categorical-value/
     time-bucket row is (see build_xml_router's `/stats`/`/predict` routes).
     """
 
@@ -159,7 +159,7 @@ def _record_version(record: BaseModel) -> str:
     """
     updated_at = getattr(record, "updated_at", None)
     # pragma: no cover below is for tests/e2e: every e2e resource view has updated_at;
-    # tests/unit/craftainer_tool_crud/controllers/test_crud_router_conditional.py covers it.
+    # tests/unit/craftainer_crud/controllers/test_crud_router_conditional.py covers it.
     if updated_at is None:  # pragma: no cover
         return record.model_dump_json()
     return f"{getattr(record, 'id', '')}:{updated_at.isoformat()}"
@@ -313,7 +313,7 @@ async def _resolve_predict(
     Shared by build_json_router's and build_xml_router's own `/predict` routes --
     only the rendering differs between them. Raises RequestValidationError (422)
     for an unrecognized `field`/`bucket` or fewer than 2 buckets of history --
-    see craftainer_tool_crud.controllers.crud_stats.forecast's own docstring for the latter.
+    see craftainer_crud.controllers.crud_stats.forecast's own docstring for the latter.
     """
     bucket = crud_stats.parse_bucket(bucket_raw) or TimeBucket.DAY
     validated_field = crud_stats.parse_predict_field(schema, field)
@@ -358,7 +358,7 @@ def _require_cache_resource(stats_cache: StatsCache | None, resource: str | None
     """
     if stats_cache is None:
         return ""
-    # e2e-unreachable: a config guard; covered by tests/unit/craftainer_tool_crud/controllers/
+    # e2e-unreachable: a config guard; covered by tests/unit/craftainer_crud/controllers/
     # test_crud_router_stats_cache.py
     if resource is None:  # pragma: no cover
         raise ValueError("stats_cache requires resource= to be set")
@@ -407,7 +407,7 @@ def _stats_to_xml(view: ResourceStatsView) -> str:
 
     `view.lifecycle is None`'s branch below is `# pragma: no cover`: it's populated
     whenever the underlying model carries *any* record-lifecycle mixin (see
-    craftainer_tool_crud.repositories.memory/sqlalchemy's own `stats`), and Hero -- the only
+    craftainer_crud.repositories.memory/sqlalchemy's own `stats`), and Hero -- the only
     resource wired up through the HTTP layer that tests/e2e exercises -- carries
     every one (Archivable, Draftable, Schedulable, Lockable; see
     app.models.hero.Hero), so `lifecycle` is never actually None through the real
@@ -485,7 +485,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
 
     `id`, when present as a query parameter, addresses a single record on the
     GET/PATCH/DELETE routes (404 if missing) -- otherwise GET lists (optionally
-    filtered/sorted per craftainer_tool_crud.controllers.crud_query) and PATCH/DELETE act in bulk
+    filtered/sorted per craftainer_crud.controllers.crud_query) and PATCH/DELETE act in bulk
     over whatever filters are given, rejecting an empty filter set with no `id`
     (400) so an empty query string can never target every record by accident.
 
@@ -496,7 +496,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     router mirrors all of this; the web router serves no records.
 
     `stats_cache`, when given (with `resource`), serves `/stats` and `/predict` from a
-    shared `craftainer_tool_crud.interfaces.cache.StatsCache` as pre-serialized bodies,
+    shared `craftainer_crud.interfaces.cache.StatsCache` as pre-serialized bodies,
     keyed by route, normalized query params, response schema and the caller's
     ownership scope (`crud_stats.cache_scope`); the responses then carry an
     `X-Stats-Cache: hit|miss` header. `None` (the default) leaves both routes exactly
@@ -521,23 +521,23 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
 
     `revision_repository_dependency` + `resource` together add
     `GET <prefix>/revisions?id=`, a plain query against the shared Revision
-    table (see craftainer_tool_crud.models.revision) for that record's history, newest first --
+    table (see craftainer_crud.models.revision) for that record's history, newest first --
     not routed through `crud_dependency` at all, since it reads a different
     model entirely.
 
     `event_source_dependency`, if given, adds `GET <prefix>/events`: a
     Server-Sent Events stream of this resource's create/update/update_many/
     delete/delete_many/restore/restore_many activity (see
-    craftainer_tool_crud.interfaces.base.EventSink/EventSource and
+    craftainer_crud.interfaces.base.EventSink/EventSource and
     docs/adrs/0015-mqtt-for-crud-events.md). Gated by the same `read_roles`
     dependency as the plain `GET` list route above.
 
     `stats_enabled=True` adds `GET <prefix>/stats` (count/numeric/categorical/
-    time-series/lifecycle aggregates, see craftainer_tool_crud.controllers.crud_stats and
-    craftainer_tool_crud.views.stats.ResourceStatsView) and `GET <prefix>/predict` (an
+    time-series/lifecycle aggregates, see craftainer_crud.controllers.crud_stats and
+    craftainer_crud.views.stats.ResourceStatsView) and `GET <prefix>/predict` (an
     ordinary-least-squares trend forecast over the same time-bucketed series,
-    see craftainer_tool_crud.controllers.crud_stats.forecast and
-    craftainer_tool_crud.views.stats.PredictionView)
+    see craftainer_crud.controllers.crud_stats.forecast and
+    craftainer_crud.views.stats.PredictionView)
     -- both gated by the same `read_roles` dependency as the plain `GET` list
     route.
     """
@@ -636,7 +636,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
                 raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
             _validate_publish_ready(record, create_schema)
             # `crud.get` above is unscoped for a resource using owner=OwnerScope(...,
-            # read_scoped=False) (see craftainer_tool_crud.interfaces.base.OwnerScope), but
+            # read_scoped=False) (see craftainer_crud.interfaces.base.OwnerScope), but
             # `crud.update`
             # always applies the owner filter -- so a caller who can see someone else's
             # record here can still get None back from update instead of the record
@@ -851,11 +851,11 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
     same opt-in params) restore/draft/publish/revisions/events/stats/predict.
     `GET <prefix>/stats`/`GET <prefix>/predict` are hand-assembled nested XML
     (see `_stats_to_xml`/`_prediction_to_xml`) rather than a single `to_xml`
-    call -- craftainer_tool_crud.xml_codec.to_xml only supports a flat model (see its own module
+    call -- craftainer_crud.xml_codec.to_xml only supports a flat model (see its own module
     docstring), and stats/predictions are naturally nested (per-field
     aggregates, a distribution, a time series). `GET <prefix>/events` stays a
     JSON-payload SSE stream even here -- SSE's `data:` line is a transport
-    envelope, not a resource representation (see craftainer_tool_crud.interfaces.base.
+    envelope, not a resource representation (see craftainer_crud.interfaces.base.
     EventSink/EventSource's own docstrings), so it's exempt from this router's
     otherwise-XML rendering.
     """
@@ -1150,7 +1150,7 @@ def build_web_router[CreateT: BaseModel](
     same-named params -- this router adds no new FastAPI routes for them (the
     sibling JSON router already serves `/restore`/`/draft`/`/publish`/
     `/revisions`/`/events`/`/stats`/`/predict`, see build_json_router); they're
-    only used here to decide which UI craftainer_tool_crud.web_components.render_crud_component_js
+    only used here to decide which UI craftainer_crud.web_components.render_crud_component_js
     generates (an Archive/Restore action, a Save-as-draft/Publish pair, a History
     panel, a live-events subscription, a Stats/Predict panel), calling those
     JSON routes directly, same as every other action already does.
@@ -1160,7 +1160,7 @@ def build_web_router[CreateT: BaseModel](
     `is_list_annotation`, rather than passed separately -- one less value for a
     caller to keep in sync with its own view module.
 
-    The rendered web component (`craftainer_tool_crud.web_components.render_crud_component_js`)
+    The rendered web component (`craftainer_crud.web_components.render_crud_component_js`)
     talks directly to `api_base` -- the sibling build_json_router's own prefix --
     for every list/create/update/delete/filters-metadata call, so this router
     itself only ever serves `/form` and `/components.js`; filtering/sorting/bulk
