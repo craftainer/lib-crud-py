@@ -6,15 +6,15 @@ from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from craftainer_tool_crud.interfaces import dependency
-from craftainer_tool_crud.interfaces.base import InMemoryEventSink, MQTTEventSink, MQTTEventSource
-from craftainer_tool_crud.interfaces.dependency import (
+from craftainer_crud.interfaces import dependency
+from craftainer_crud.interfaces.base import InMemoryEventSink, MQTTEventSink, MQTTEventSource
+from craftainer_crud.interfaces.dependency import (
     build_event_sink_provider,
     build_event_source_provider,
     build_repository_provider,
 )
-from craftainer_tool_crud.repositories.memory import InMemoryRepository
-from craftainer_tool_crud.repositories.sqlalchemy import SQLAlchemyRepository
+from craftainer_crud.repositories.memory import InMemoryRepository
+from craftainer_crud.repositories.sqlalchemy import SQLAlchemyRepository
 from tests.support.hero_model import Hero as HeroModel
 from tests.unit.conftest import CrudConfigOverride
 
@@ -57,7 +57,7 @@ def test_mock_mode_event_sink_and_source_share_one_instance_per_resource(
 
     Required for MODE=mock's delivery to work at all: a publish() call from the sink
     side must reach the subscribe()-registered queues on the source side -- see
-    craftainer_tool_crud.interfaces.dependency's own `_mock_event_sink_for` docstring.
+    craftainer_crud.interfaces.dependency's own `_mock_event_sink_for` docstring.
     """
     override_crud_config(use_memory=True)
     dependency._mock_event_sinks.clear()

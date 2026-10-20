@@ -1,1 +1,1 @@
-"""Unit tests for craftainer_tool_crud.repositories."""
+"""Unit tests for craftainer_crud.repositories."""

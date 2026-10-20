@@ -246,7 +246,7 @@ The sections above still apply; these are the package-specific additions.
   in `checks.yml`. Benchmarks live in `tests/bench/`, excluded from the
   default `pytest` run; run them with `uv run pytest tests/bench --no-cov`.
 - **Adding backing services for integration tests.** A package that needs a
-  service (for example `tool-crud` and its Postgres) uses the compose hook,
+  service (for example `lib-crud-py` and its Postgres) uses the compose hook,
   not a new compose file wired into the base one: add an `include:` of a
   stack fragment under `.devcontainer/stack/`, plus the `environment`
   (connection URL, `UV_PROJECT_ENVIRONMENT` if the project directory is a

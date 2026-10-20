@@ -1,7 +1,7 @@
 # Project metadata, dependencies, and every linter/type-checker/test-runner
 # config live here, in one file.
 [project]
-name = "craftainer-tool-crud"
+name = "craftainer-crud"
 # Single source of the version. Stays 0.0.0 in git: release.yml's tag is the
 # real version, stamped into the build at release time without a commit.
 version = "0.0.0"
@@ -49,7 +49,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/craftainer_tool_crud"]
+packages = ["src/craftainer_crud"]
 
 [tool.ruff]
 line-length = 100
@@ -69,14 +69,14 @@ select = [
 ignore = ["COM812", "ISC001"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["craftainer_tool_crud"]
+known-first-party = ["craftainer_crud"]
 
 [tool.ruff.lint.per-file-ignores]
 # assert is the point of a test; comparing to literal values is not a magic number.
 "tests/**" = ["S101", "PLR2004"]
 # Fake Repository fixtures mirror the real Repository protocol's
 # include_archived/include_unpublished-bearing get/list/count signatures (see the
-# src/craftainer_tool_crud/repositories/*.py per-file-ignores below for the same reasoning).
+# src/craftainer_crud/repositories/*.py per-file-ignores below for the same reasoning).
 "tests/unit/controllers/test_crud_router.py" = ["S101", "PLR2004", "PLR0913"]
 "tests/unit/interfaces/test_base.py" = ["S101", "PLR2004", "PLR0913"]
 # crud_router.py's factories take one named parameter per route-building option
@@ -88,42 +88,42 @@ known-first-party = ["craftainer_tool_crud"]
 # shape one-for-one -- splitting it up would hide that direct correspondence,
 # which is the point (see "Generic CRUD router factories" in
 # controllers/README.md).
-"src/craftainer_tool_crud/controllers/crud_router.py" = ["ANN401", "PLR0913", "PLR0915", "PLR0917"]
+"src/craftainer_crud/controllers/crud_router.py" = ["ANN401", "PLR0913", "PLR0915", "PLR0917"]
 # render_crud_component_js takes one named parameter per opt-in UI capability
 # it renders (archivable/draftable/has_revisions/has_events/stats_enabled),
 # mirroring crud_router.py's build_json_router's own opt-in param shape --
 # inherent to keeping this generic across every resource, not accidental
 # complexity.
-"src/craftainer_tool_crud/web_components.py" = ["PLR0913"]
+"src/craftainer_crud/web_components.py" = ["PLR0913"]
 # crud_actions.py's resolve_* helpers take one named parameter per piece of
 # per-route context (crud/schema/request/id/not_found/etc, PLR0913) and return
 # a schema instance or a bulk-result view depending on the id/filter branch
 # taken (ANN401) -- same generic-wiring justification as crud_router.py above;
 # see the module docstring.
-"src/craftainer_tool_crud/controllers/crud_actions.py" = ["ANN401", "PLR0913"]
+"src/craftainer_crud/controllers/crud_actions.py" = ["ANN401", "PLR0913"]
 # Repository.get/list/count and CRUDInterface.get/list/count/CompatCRUD.get/list/
 # count all take include_archived/include_unpublished alongside their existing
-# filters/sort/skip/limit parameters (see craftainer_tool_crud.models.mixins) -- one named kwarg
+# filters/sort/skip/limit parameters (see craftainer_crud.models.mixins) -- one named kwarg
 # per lifecycle flag, inherent to keeping every generic query method aware of
 # both, not accidental complexity.
-"src/craftainer_tool_crud/repositories/base.py" = ["PLR0913"]
-"src/craftainer_tool_crud/repositories/memory.py" = ["PLR0913"]
-"src/craftainer_tool_crud/repositories/sqlalchemy.py" = ["PLR0913"]
-"src/craftainer_tool_crud/interfaces/base.py" = ["PLR0913"]
-"src/craftainer_tool_crud/interfaces/compat.py" = ["PLR0913"]
+"src/craftainer_crud/repositories/base.py" = ["PLR0913"]
+"src/craftainer_crud/repositories/memory.py" = ["PLR0913"]
+"src/craftainer_crud/repositories/sqlalchemy.py" = ["PLR0913"]
+"src/craftainer_crud/interfaces/base.py" = ["PLR0913"]
+"src/craftainer_crud/interfaces/compat.py" = ["PLR0913"]
 
 [tool.importlinter]
 # Within the package, a layer may import a layer listed after it, never one
 # listed before it (models must never import from controllers). Run via
 # `uv run lint-imports` (wired into .pre-commit-config.yaml).
-root_packages = ["craftainer_tool_crud"]
+root_packages = ["craftainer_crud"]
 # Needed for the forbidden-import contract below: `app` is not part of this package.
 include_external_packages = true
 
 [[tool.importlinter.contracts]]
 name = "crud layers"
 type = "layers"
-containers = ["craftainer_tool_crud"]
+containers = ["craftainer_crud"]
 layers = [
     "controllers",
     "interfaces",
@@ -137,7 +137,7 @@ layers = [
 [[tool.importlinter.contracts]]
 name = "crud never imports app"
 type = "forbidden"
-source_modules = ["craftainer_tool_crud"]
+source_modules = ["craftainer_crud"]
 forbidden_modules = ["app"]
 
 [tool.mypy]
@@ -150,7 +150,7 @@ cache_dir = "/home/vscode/.cache/mypy"
 [tool.pytest.ini_options]
 cache_dir = "/home/vscode/.cache/pytest"
 # tests/bench is run explicitly: `uv run pytest tests/bench --no-cov`.
-addopts = "--strict-markers --strict-config -ra --ignore=tests/bench --cov=craftainer_tool_crud --cov-report=term-missing"
+addopts = "--strict-markers --strict-config -ra --ignore=tests/bench --cov=craftainer_crud --cov-report=term-missing"
 # tests/integration needs the compose Postgres (POSTGRES_* env vars) and is part of the
 # coverage gate: the SQLAlchemy repository is exercised only against a real database.
 testpaths = ["tests/unit", "tests/integration"]
@@ -162,7 +162,7 @@ asyncio_default_fixture_loop_scope = "session"
 filterwarnings = ["error"]
 
 [tool.coverage.run]
-source = ["craftainer_tool_crud"]
+source = ["craftainer_crud"]
 branch = true
 relative_files = true
 data_file = "/home/vscode/.cache/coverage/.coverage"

@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from craftainer_tool_crud.interfaces.base import MQTTEventSink, MQTTEventSource, _background_tasks
+from craftainer_crud.interfaces.base import MQTTEventSink, MQTTEventSource, _background_tasks
 
 # A stand-in for the broker credential the sink forwards; not a real secret.
 _FAKE_BROKER_CREDENTIAL = "p"

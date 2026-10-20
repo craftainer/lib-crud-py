@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from craftainer_tool_crud.xml_codec import from_xml, to_xml
+from craftainer_crud.xml_codec import from_xml, to_xml
 from tests.support.hero_views import HeroV2, HeroV2Create
 
 

@@ -355,7 +355,7 @@ wheels = [
 ]
 
 [[package]]
-name = "craftainer-tool-crud"
+name = "craftainer-crud"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [

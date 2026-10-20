@@ -7,15 +7,14 @@ from typing import Any
 
 import pytest
 
-import craftainer_tool_crud
-from craftainer_tool_crud.interfaces.base import MQTTEventSink
-from craftainer_tool_crud.xml_codec import from_xml
+import craftainer_crud
+from craftainer_crud.interfaces.base import MQTTEventSink
+from craftainer_crud.xml_codec import from_xml
 from tests.support.hero_views import HeroV2Create
 
-_PACKAGE = craftainer_tool_crud.__name__
+_PACKAGE = craftainer_crud.__name__
 _MODULES = [
-    info.name
-    for info in pkgutil.walk_packages(craftainer_tool_crud.__path__, prefix=f"{_PACKAGE}.")
+    info.name for info in pkgutil.walk_packages(craftainer_crud.__path__, prefix=f"{_PACKAGE}.")
 ]
 
 
