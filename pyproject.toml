@@ -159,7 +159,11 @@ asyncio_mode = "auto"
 # One session-scoped loop: the integration tests share a process-wide asyncpg
 # engine, and asyncpg rejects connections handed from one loop to another.
 asyncio_default_fixture_loop_scope = "session"
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # The renamed package warns on import by design (see test_deprecation.py).
+    "ignore:craftainer-tool-crud is renamed to.*:DeprecationWarning",
+]
 
 [tool.coverage.run]
 source = ["craftainer_tool_crud"]

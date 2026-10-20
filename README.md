@@ -1,5 +1,12 @@
 # craftainer-tool-crud
 
+> [!WARNING]
+> **`craftainer-tool-crud` is renamed to `craftainer-crud`.** Install `craftainer-crud` from PyPI and
+> import `craftainer_crud` instead of `craftainer_tool_crud`; development continues at
+> <https://github.com/craftainer/lib-crud-py>. **0.1.2 is the final release under
+> this name.** Importing this package emits a `DeprecationWarning`; the code is
+> otherwise identical to 0.1.1, so existing pins keep installing.
+
 > [!NOTE]
 > This repository is vibe coded with [Claude](https://claude.com/product/claude-code).
 
