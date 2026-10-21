@@ -13,7 +13,7 @@ from typing import Any, cast
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from craftainer_tool_crud.interfaces.base import (
+from craftainer_crud.interfaces.base import (
     CRUDInterface,
     EventSink,
     InMemoryEventSink,
@@ -22,8 +22,8 @@ from craftainer_tool_crud.interfaces.base import (
     _background_tasks,
     _mqtt_connection_kwargs,
 )
-from craftainer_tool_crud.repositories.filtering import FilterClause, FilterOp, SortClause
-from craftainer_tool_crud.repositories.stats import ResourceStats, TimeBucket
+from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
+from craftainer_crud.repositories.stats import ResourceStats, TimeBucket
 
 
 @dataclass
@@ -114,7 +114,7 @@ class _FakeWidgetRepository:
     async def restore(self, record_id: int) -> _WidgetRecord | None:
         """Return the record with the given id, or None -- _WidgetRecord has no archived state.
 
-        Standing in for craftainer_tool_crud.repositories.{memory,sqlalchemy}'s real
+        Standing in for craftainer_crud.repositories.{memory,sqlalchemy}'s real
         Archivable-gated
         `restore`, which is exercised directly against Hero in tests/unit/repositories/
         test_memory.py and tests/integration/repositories/test_sqlalchemy.py -- this
@@ -178,7 +178,7 @@ class _FakeWidgetRepository:
         return a minimal ResourceStats -- enough to prove CRUDInterface.stats is a
         thin, correctly-scoped pass-through, without duplicating the real
         aggregation logic
-        craftainer_tool_crud.repositories.memory/craftainer_tool_crud.repositories.sqlalchemy own.
+        craftainer_crud.repositories.memory/craftainer_crud.repositories.sqlalchemy own.
         """
         self.last_stats_filters = filters
         return ResourceStats(
@@ -816,16 +816,49 @@ class _FailingDisconnectClient:
 async def test_mqtt_event_source_logs_a_failed_disconnect(caplog: pytest.LogCaptureFixture) -> None:
     """A disconnect failure in MQTTEventSource._events's detached task is logged, not lost.
 
-    See craftainer_tool_crud.interfaces.base._events's own docstring for why disconnecting is a
+    See craftainer_crud.interfaces.base._events's own docstring for why disconnecting is a
     detached background task rather than a plain `await` in this generator's own
     `finally` -- this asserts that detached task's own failure still leaves a trace.
     """
     source = MQTTEventSource(hostname="broker", port=1883, resource="hero", keepalive=60)
     events = source._events(_FailingDisconnectClient())  # type: ignore[arg-type]
 
-    with caplog.at_level("DEBUG", logger="craftainer_tool_crud.interfaces.base"):
+    with caplog.at_level("DEBUG", logger="craftainer_crud.interfaces.base"):
         assert [event async for event in events] == []
         pending = list(_background_tasks)
         await asyncio.gather(*pending)
 
     assert "MQTT disconnect failed" in caplog.text
+
+
+async def test_scoped_in_memory_event_sink_drops_a_mismatched_publish() -> None:
+    """A sink scoped to one resource ignores events published for another."""
+    sink = InMemoryEventSink(resource="hero")
+    _, events = await sink.subscribe(None)
+
+    await sink.publish(resource="villain", record_id=9, action="create", snapshot={"id": 9})
+    await sink.publish(resource="hero", record_id=1, action="create", snapshot={"id": 1})
+
+    assert (await events.__anext__())["record_id"] == 1
+
+
+async def test_scoped_in_memory_event_sink_fans_out_matching_events() -> None:
+    """Two subscribers on one scoped sink both receive a matching publish."""
+    sink = InMemoryEventSink(resource="hero")
+    _, first = await sink.subscribe(None)
+    _, second = await sink.subscribe(None)
+
+    await sink.publish(resource="hero", record_id=1, action="create", snapshot={"id": 1})
+
+    assert (await first.__anext__())["record_id"] == 1
+    assert (await second.__anext__())["record_id"] == 1
+
+
+async def test_unscoped_in_memory_event_sink_still_broadcasts_every_resource() -> None:
+    """With resource=None, events for any resource reach every subscriber."""
+    sink = InMemoryEventSink()
+    _, events = await sink.subscribe(None)
+
+    await sink.publish(resource="villain", record_id=9, action="create", snapshot={"id": 9})
+
+    assert (await events.__anext__())["resource"] == "villain"

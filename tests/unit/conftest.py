@@ -1,4 +1,4 @@
-"""Shared fixtures for tests/unit/craftainer_tool_crud."""
+"""Shared fixtures for tests/unit/craftainer_crud."""
 
 from collections.abc import Callable
 from dataclasses import replace
@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from craftainer_tool_crud import config as crud_config
-from craftainer_tool_crud.config import CrudConfig, MQTTConfig, get_config
+from craftainer_crud import config as crud_config
+from craftainer_crud.config import CrudConfig, MQTTConfig, get_config
 
 CrudConfigOverride = Callable[..., CrudConfig]
 

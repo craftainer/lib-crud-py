@@ -12,14 +12,14 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from craftainer_tool_crud.controllers.crud_router import (
+from craftainer_crud.controllers.crud_router import (
     build_json_router,
     build_resource_router,
     build_xml_router,
 )
-from craftainer_tool_crud.controllers.crud_stats import cache_key, cache_scope
-from craftainer_tool_crud.interfaces.base import CRUDInterface, OwnerScope
-from craftainer_tool_crud.interfaces.compat import CompatCRUD
+from craftainer_crud.controllers.crud_stats import cache_key, cache_scope
+from craftainer_crud.interfaces.base import CRUDInterface, OwnerScope
+from craftainer_crud.interfaces.compat import CompatCRUD
 from tests.unit.controllers.test_crud_router import (
     GadgetCRUD,
     _FakeGadgetRepository,

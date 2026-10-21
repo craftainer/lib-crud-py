@@ -17,7 +17,7 @@ Three independent suites:
   `uv run pytest tests/bench --no-cov --codspeed`.
 
 A plain `uv run pytest` collects `unit/` and `integration/` and enforces 100%
-line and branch coverage of `src/craftainer_tool_crud`
+line and branch coverage of `src/craftainer_crud`
 (`[tool.coverage.report]` in `pyproject.toml`). `SQLAlchemyRepository` is only
 covered by `integration/` (its SQL is Postgres-specific), so the gate needs the
 database; `checks.yml` runs inside the devcontainer, where the compose stack

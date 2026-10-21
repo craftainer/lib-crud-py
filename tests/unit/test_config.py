@@ -1,14 +1,14 @@
-"""Unit test: craftainer_tool_crud.config's injection point and the session dependency."""
+"""Unit test: craftainer_crud.config's injection point and the session dependency."""
 
 from typing import Any, cast
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from craftainer_tool_crud import config as crud_config
-from craftainer_tool_crud.config import CrudConfig, configure, get_config, get_session_factory
-from craftainer_tool_crud.controllers.crud_router import _rate_limited
-from craftainer_tool_crud.models.base import get_db
+from craftainer_crud import config as crud_config
+from craftainer_crud.config import CrudConfig, configure, get_config, get_session_factory
+from craftainer_crud.controllers.crud_router import _rate_limited
+from craftainer_crud.models.base import get_db
 
 
 @pytest.fixture(autouse=True)
