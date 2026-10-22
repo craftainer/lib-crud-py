@@ -94,7 +94,7 @@ descending. Reserved query keys are `skip`, `limit`, `sort`, `id`,
 field does not take, or an unparsable value is a client error, never ignored.
 For a float field (`number`) `nan` and `inf` are unparsable: `422`.
 
-**`?id=` takes no filters.** `GET`, `PATCH` and `DELETE` with `?id=` together with
+**`?id=` takes no filters.** Every route that takes `?id=` (`GET`, `PATCH`, `DELETE`, `clone`, `publish`, `restore`, `revisions`) with `?id=` together with
 any non-reserved query key (a filter, recognised or not) is `422` (`loc`
 `["query", <key>]`, `filters cannot be combined with id`); nothing is read or
 written. Address one record by `id`, or many by filters, never both. The
@@ -186,11 +186,11 @@ validation, a list of validation errors (`loc`, `msg`, `type`).
 | `PATCH base_path?<filters>` (bulk) | `200` `{matched, ids}` | `400` no filters, or more than `bulk.max_matched` matches; `423` |
 | `DELETE base_path?id=` | `204` | `404`; `412`; `423`; `422` `?id=` with filters |
 | `DELETE base_path?<filters>` (bulk) | `200` `{matched, ids}` | as bulk `PATCH` |
-| `POST paths.clone?id=` | `201`, the copy | `404` |
+| `POST paths.clone?id=` | `201`, the copy | `404`; `422` `?id=` with filters |
 | `POST paths.draft` | `201`, the draft | `422` |
-| `POST paths.publish?id=` | `200`, the record | `404`; `422` still missing required fields |
-| `POST paths.restore` (`?id=` or filters) | `200` | `404`; `400` as bulk |
-| `GET paths.revisions?id=` | `200`, newest first | `404`/empty |
+| `POST paths.publish?id=` | `200`, the record | `404`; `422` still missing required fields, or `?id=` with filters |
+| `POST paths.restore` (`?id=` or filters) | `200` | `404`; `400` as bulk; `422` `?id=` with filters |
+| `GET paths.revisions?id=` | `200`, newest first | `404`/empty; `422` `?id=` with filters |
 | `GET paths.stats`, `paths.predict` | `200` | `422` bad `bucket`, `field` or `periods` |
 | `GET paths.filters` | `200`, the same information as `fields` (`kind` instead of `value_type`) | |
 | `GET paths.events` | `200` `text/event-stream` | |

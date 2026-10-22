@@ -15,7 +15,7 @@ live session. The Rust server fixes the same four so both stay identical.
 
 ## Decision
 
-- `?id=` with any non-reserved query key on get, update and delete is a 422.
+- `?id=` with any non-reserved query key is a 422 on all `?id=` routes: get, update, delete, restore, clone, publish and revisions (JSON and XML).
 - The forecast regresses on bucket time (whole buckets since the first bucket);
   the exact formula is in `docs/manifest.md`.
 - `nan` and `inf` in a float filter are a 422.

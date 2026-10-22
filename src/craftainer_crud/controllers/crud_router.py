@@ -45,6 +45,7 @@ from craftainer_crud.controllers.crud_query import (
     describe_fields,
     parse_include_archived,
     parse_include_unpublished,
+    reject_filters_with_id,
 )
 from craftainer_crud.interfaces.cache import StatsCache
 from craftainer_crud.manifest.registry import ManifestOptions, RegisteredResource
@@ -700,7 +701,8 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
         )
 
     @router.post("/clone", status_code=status.HTTP_201_CREATED, dependencies=[write_roles])
-    async def clone_record(id: int, crud: crud_dependency) -> schema:  # type: ignore[valid-type] # noqa: A002
+    async def clone_record(id: int, crud: crud_dependency, request: Request) -> schema:  # type: ignore[valid-type] # noqa: A002
+        reject_filters_with_id(request.query_params)
         record = await crud.get(id)
         if record is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
@@ -715,7 +717,8 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
             return await crud.create(record)  # type: ignore[no-any-return]
 
         @router.post("/publish", dependencies=[write_roles])
-        async def publish_record(id: int, crud: crud_dependency) -> schema:  # type: ignore[valid-type] # noqa: A002
+        async def publish_record(id: int, crud: crud_dependency, request: Request) -> schema:  # type: ignore[valid-type] # noqa: A002
+            reject_filters_with_id(request.query_params)
             record = await crud.get(id)
             if record is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
@@ -749,8 +752,10 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
         @router.get("/revisions", dependencies=[read_roles])
         async def list_revisions(
             repository: revision_repository_dependency,
+            request: Request,
             id: int,  # noqa: A002
         ) -> list[RevisionView]:
+            reject_filters_with_id(request.query_params)
             records = await repository.list(
                 filters=[
                     FilterClause("resource", FilterOp.EQ, resource),
@@ -1033,7 +1038,9 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
         id: int,  # noqa: A002
         crud: crud_dependency,
         response: Response,
+        request: Request,
     ) -> Response:
+        reject_filters_with_id(request.query_params)
         record = await crud.get(id)
         if record is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
@@ -1071,7 +1078,9 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
             id: int,  # noqa: A002
             crud: crud_dependency,
             response: Response,
+            request: Request,
         ) -> Response:
+            reject_filters_with_id(request.query_params)
             record = await crud.get(id)
             if record is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
@@ -1108,8 +1117,10 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
         async def list_revisions_xml(
             repository: revision_repository_dependency,
             response: Response,
+            request: Request,
             id: int,  # noqa: A002
         ) -> Response:
+            reject_filters_with_id(request.query_params)
             records = await repository.list(
                 filters=[
                     FilterClause("resource", FilterOp.EQ, resource),

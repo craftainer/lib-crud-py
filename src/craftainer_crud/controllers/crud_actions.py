@@ -205,6 +205,7 @@ async def resolve_restore(
 ) -> Any:  # BaseModel | BulkUpdateResult, see module docstring
     """Restore one archived record by id, or bulk-restore every record matching the filters."""
     if id is not None:
+        reject_filters_with_id(request.query_params)
         restored = await crud.restore(id)  # type: ignore[attr-defined]
         if restored is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)

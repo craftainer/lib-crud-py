@@ -75,7 +75,7 @@ are given — a request with **no** filters and no `id` is rejected (422 via
 `craftainer_crud.controllers.crud_actions`'s `resolve_list_or_get`/`resolve_update`/
 `resolve_delete` implement this id/filter/bulk decision once, shared by both
 factories; each wraps the same calls in its own response format (JSON body
-vs. an XML-rendered `Response`). A single-record get/update/delete (`id` given) with any non-reserved query key is rejected (422) instead of silently ignoring the filters; a float filter value of `nan`/`inf` is a 422 too. Before a bulk update/delete actually runs,
+vs. an XML-rendered `Response`). A single-record get/update/delete/restore/clone/publish/revisions request (`id` given) with any non-reserved query key is rejected (422) instead of silently ignoring the filters; a float filter value of `nan`/`inf` is a 422 too. Before a bulk update/delete actually runs,
 `crud_actions.py` counts how many records the filters match
 (`CRUDLike.count`) and refuses the action (400) above
 `CrudConfig.bulk_action_max_matched` (default 1000, set by the host from `Settings`) — a
