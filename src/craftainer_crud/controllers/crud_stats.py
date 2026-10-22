@@ -12,7 +12,9 @@ FieldKind.ENUM fields become `categorical_fields`, unchanged from field_specs's
 own classification.
 
 `forecast()` is a plain ordinary-least-squares linear regression over
-`(bucket_index, value)` pairs, stdlib only (no numpy/scikit-learn) -- see
+`(bucket_offset, value)` pairs (whole buckets since the first bucket -- time, not
+position, so gaps do not skew it; exact formula on `forecast`), stdlib only (no
+numpy/scikit-learn) -- see
 docs/plans/2026-09-crud-stats-and-predictions.md's "Predictions" scope decision
 for why: no new heavy dependency, no trained-model storage/retraining/
 versioning concerns, consistent with this template's low-dependency style.
@@ -220,13 +222,41 @@ def _advance(start: datetime, bucket: TimeBucket, steps: int) -> datetime:
     return start.replace(year=year, month=month)
 
 
+def _bucket_offset(first: datetime, value: datetime, bucket: TimeBucket) -> int:
+    """Return how many whole `bucket`s `value` lies after `first` (both bucket starts).
+
+    day: whole days; week: whole days divided by 7 (floor); month: calendar months
+    (`12 * year difference + month difference`). Buckets start on a day, Monday or
+    first-of-month boundary, so the result is an exact integer, never a rounding.
+    """
+    if bucket is TimeBucket.MONTH:
+        return (value.year - first.year) * 12 + (value.month - first.month)
+    days = (value - first).days
+    return days // 7 if bucket is TimeBucket.WEEK else days
+
+
 def forecast(series: Sequence[BucketValue], periods: int, bucket: TimeBucket) -> list[Prediction]:
     """Project `periods` future buckets via ordinary-least-squares linear regression.
 
-    `series` must already be ordered oldest-first (both `count_series_as_values`
-    and `bucket_field_sums` above return it that way). Raises
-    InsufficientHistoryError for fewer than 2 buckets of history -- a single
-    point has no meaningful trend.
+    The regression is on bucket *time*, not on position in the series, so a gap (an
+    empty bucket, which no server zero-fills) does not skew the trend. With
+    `x_i = _bucket_offset(first bucket start, bucket start i)` (a whole number of
+    buckets, so x_0 = 0) and `n = len(series)`, evaluated left to right with plain
+    accumulating float arithmetic (no `sum`, which is compensated from Python 3.12 and
+    would differ in the last bit):
+
+        mean_x    = (x_0 + ... + x_{n-1}) / n
+        mean_y    = (y_0 + ... + y_{n-1}) / n
+        sxx       = sum((x_i - mean_x) * (x_i - mean_x))
+        sxy       = sum((x_i - mean_x) * (y_i - mean_y))
+        slope     = 0.0 if sxx == 0 else sxy / sxx
+        intercept = mean_y - slope * mean_x
+        value_k   = slope * (x_{n-1} + k) + intercept          for k = 1..periods
+
+    The projected bucket k starts k whole buckets after the last one. Raises
+    InsufficientHistoryError for fewer than 2 buckets of history -- a single point has
+    no meaningful trend. `series` must already be ordered oldest-first (both
+    `count_series_as_values` and `bucket_field_sums` above return it that way).
     """
     minimum_buckets = 2
     if len(series) < minimum_buckets:
@@ -234,22 +264,28 @@ def forecast(series: Sequence[BucketValue], periods: int, bucket: TimeBucket) ->
             f"need at least {minimum_buckets} time buckets of history to forecast a trend, "
             f"got {len(series)}"
         )
-    xs = list(range(len(series)))
+    starts = [datetime.fromisoformat(item.bucket_start) for item in series]
+    xs = [float(_bucket_offset(starts[0], start, bucket)) for start in starts]
     ys = [item.value for item in series]
-    mean_x = sum(xs) / len(xs)
-    mean_y = sum(ys) / len(ys)
-    denominator = sum((x - mean_x) ** 2 for x in xs)
-    slope = (
-        0.0
-        if denominator == 0
-        else sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True)) / denominator
-    )
+    count = float(len(series))
+    total_x = 0.0
+    total_y = 0.0
+    for x, y in zip(xs, ys, strict=True):
+        total_x += x
+        total_y += y
+    mean_x = total_x / count
+    mean_y = total_y / count
+    sxx = 0.0
+    sxy = 0.0
+    for x, y in zip(xs, ys, strict=True):
+        sxx += (x - mean_x) * (x - mean_x)
+        sxy += (x - mean_x) * (y - mean_y)
+    slope = 0.0 if sxx == 0 else sxy / sxx
     intercept = mean_y - slope * mean_x
-    last_start = datetime.fromisoformat(series[-1].bucket_start)
+    last_x = xs[-1]
     predictions: list[Prediction] = []
     for step in range(1, periods + 1):
-        x = len(series) - 1 + step
-        value = slope * x + intercept
-        bucket_start = _advance(last_start, bucket, step)
+        value = slope * (last_x + step) + intercept
+        bucket_start = _advance(starts[-1], bucket, step)
         predictions.append(Prediction(bucket_start=bucket_start.isoformat(), value=value))
     return predictions

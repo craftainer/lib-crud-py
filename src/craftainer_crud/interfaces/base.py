@@ -24,7 +24,6 @@ import asyncio
 import json
 import logging
 import ssl
-import uuid
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -32,6 +31,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel
 
+from craftainer_crud.interfaces.subscriber_ids import resolve_subscriber_id
 from craftainer_crud.repositories.base import Repository
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_crud.repositories.stats import ResourceStats, TimeBucket
@@ -125,7 +125,9 @@ class EventSource(Protocol):
     async def subscribe(
         self, subscriber_id: str | None
     ) -> tuple[str, AsyncIterator[dict[str, Any]]]:
-        """Resolve `subscriber_id` (issuing a new one if None) and return it alongside
+        """Resolve `subscriber_id` (issuing a new one if None, or if it is not an id this
+        server minted for this resource -- see craftainer_crud.interfaces.subscriber_ids)
+        and return it alongside
         an async iterator of this resource's event envelopes (the same JSON-shaped dict
         `EventSink.publish` was called with, plus a `timestamp`) from this point on.
 
@@ -232,7 +234,8 @@ class MQTTEventSource:
     """EventSource subscribing to a real MQTT broker via a persistent session at QoS 1.
 
     `subscribe()` derives the MQTT client id from `subscriber_id` (issuing a new
-    `uuid4` if the caller has none yet) and connects with `clean_session=False` --
+    signed id if the caller has none, or none this server minted for this resource) and
+    connects with `clean_session=False` --
     the broker then keeps a queue of QoS-1 messages published to `crud-events/
     <resource>` while this client id is disconnected (bounded by
     `.devcontainer/stack/mqtt/mosquitto.conf`'s `max_queued_messages`/
@@ -271,7 +274,7 @@ class MQTTEventSource:
         message published in the gap had no persistent session to queue against and
         was simply dropped, never replayed on reconnect.
         """
-        resolved = subscriber_id or str(uuid.uuid4())
+        resolved = resolve_subscriber_id(self.resource, subscriber_id)
         import aiomqtt  # noqa: PLC0415 -- optional `[mqtt]` extra, only needed here
 
         client = aiomqtt.Client(
@@ -379,8 +382,8 @@ class InMemoryEventSink:
     async def subscribe(
         self, subscriber_id: str | None
     ) -> tuple[str, AsyncIterator[dict[str, Any]]]:
-        """Register a new queue under `subscriber_id` (issuing one if None) and return it."""
-        resolved = subscriber_id or str(uuid.uuid4())
+        """Register a queue under `subscriber_id`, or a newly minted id if it is None or forged."""
+        resolved = resolve_subscriber_id(self._resource or "", subscriber_id)
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._queues[resolved] = queue
         return resolved, self._events(resolved, queue)

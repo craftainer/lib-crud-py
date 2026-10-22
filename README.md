@@ -105,6 +105,15 @@ The catalog's `service-desc` link follows the serving app's `openapi_url`
 path is advertised as is. Pass `openapi_url="/spec.json"` to override, or
 `openapi_url=None` to omit it regardless of the app.
 
+## Event stream subscriber ids
+
+`GET <prefix>/events` hands each subscriber a server-minted, HMAC-signed id in its
+first frame and resumes a session only for an id it minted for that resource. The
+key is `CrudConfig.subscriber_secret` (at least 32 bytes), random per process when
+unset; set the same value on every instance (and keep it across restarts) for
+resume to work across workers and restarts. A forged or unknown id is not an error:
+the stream starts fresh under a new id.
+
 ## Model changes need an app-side migration
 
 The package ships SQLAlchemy models (`Revision`, the lifecycle mixins) but no

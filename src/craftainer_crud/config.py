@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+MIN_SUBSCRIBER_SECRET_LEN = 32
+
 
 @dataclass(frozen=True, slots=True)
 class MQTTConfig:
@@ -36,6 +38,20 @@ class CrudConfig:
     sse_keepalive_seconds: float = 15.0
     """Idle seconds before an SSE stream emits a keep-alive comment."""
     mqtt: MQTTConfig = field(default_factory=MQTTConfig)
+    subscriber_secret: bytes | None = None
+    """Key that signs event-stream subscriber ids, at least 32 bytes. None (the default)
+    uses a random per-process secret, so ids do not survive a restart. Set it (the same
+    value on every instance) to let a client resume across restarts and workers. Keep it
+    like any signing key: whoever holds it can mint ids."""
+
+    def __post_init__(self) -> None:
+        """Refuse a subscriber secret too short to be a signing key."""
+        if (
+            self.subscriber_secret is not None
+            and len(self.subscriber_secret) < MIN_SUBSCRIBER_SECRET_LEN
+        ):
+            msg = f"subscriber_secret must be at least {MIN_SUBSCRIBER_SECRET_LEN} bytes"
+            raise ValueError(msg)
 
 
 _config = CrudConfig()
