@@ -87,6 +87,11 @@ The factories register what they build, so the manifest cannot list a route that
 is not mounted. It is filtered to the caller by running each resource's own
 `read_roles` dependency, and carries an `ETag` over that filtered body.
 
+The catalog's `service-desc` link follows the serving app's `openapi_url`
+(RFC 9727 makes the link optional): `FastAPI(openapi_url=None)` omits it, a custom
+path is advertised as is. Pass `openapi_url="/spec.json"` to override, or
+`openapi_url=None` to omit it regardless of the app.
+
 ## Model changes need an app-side migration
 
 The package ships SQLAlchemy models (`Revision`, the lifecycle mixins) but no

@@ -15,7 +15,8 @@ The shape is specified in docs/manifest.md and docs/adrs/0002-crud-manifest-v1.m
 """
 
 from contextlib import AsyncExitStack
-from typing import Any
+from enum import Enum
+from typing import Any, Final, Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.dependencies.utils import get_dependant, solve_dependencies
@@ -31,6 +32,16 @@ from craftainer_crud.manifest.registry import RegisteredResource
 
 _LINKSET_MEDIA_TYPE = "application/linkset+json"
 _OPENAPI_MEDIA_TYPE = "application/vnd.oai.openapi+json"
+
+
+class _FromApp(Enum):
+    """Sentinel type for `api_catalog_router`'s `openapi_url` default."""
+
+    TOKEN = "from-app"  # noqa: S105 - an enum value, not a credential
+
+
+FROM_APP: Final = _FromApp.TOKEN
+"""`openapi_url` default: advertise the serving app's own `openapi_url` setting."""
 
 
 async def _may_read(
@@ -112,34 +123,32 @@ def crud_manifest_router(
 def api_catalog_router(
     *,
     manifest_url: str,
-    openapi_url: str = "/openapi.json",
+    openapi_url: str | Literal[_FromApp.TOKEN] | None = FROM_APP,
     anchor: str | None = None,
 ) -> APIRouter:
     """Build the router serving `GET /.well-known/api-catalog`; mount it at the app root.
 
     `manifest_url` is the manifest's URL as a client reaches it (for example
-    `/api/_crud/manifest`); `openapi_url` is the OpenAPI document's. `anchor` is the API's
-    base URL; by default it is the base URL the request arrived on.
+    `/api/_crud/manifest`). `openapi_url` is the OpenAPI document's URL, advertised as the
+    optional `service-desc` link (RFC 9727): by default it follows the serving app's own
+    `openapi_url` (so `FastAPI(openapi_url=None)` leaves no dangling link, and a custom path
+    is advertised as is); a string overrides it; `None` omits `service-desc`. `anchor` is
+    the API's base URL; by default it is the base URL the request arrived on.
     """
     router = APIRouter()
 
     @router.get("/.well-known/api-catalog", include_in_schema=False, response_model=None)
     async def get_api_catalog(request: Request) -> JSONResponse:
-        linkset = {
-            "linkset": [
-                {
-                    "anchor": anchor if anchor is not None else str(request.base_url).rstrip("/"),
-                    "service-desc": [{"href": openapi_url, "type": _OPENAPI_MEDIA_TYPE}],
-                    "describedby": [
-                        {
-                            "href": manifest_url,
-                            "type": "application/json",
-                            "profile": MANIFEST_PROFILE,
-                        }
-                    ],
-                }
-            ]
+        service_desc = request.app.openapi_url if openapi_url is FROM_APP else openapi_url
+        entry: dict[str, Any] = {
+            "anchor": anchor if anchor is not None else str(request.base_url).rstrip("/")
         }
+        if service_desc:
+            entry["service-desc"] = [{"href": service_desc, "type": _OPENAPI_MEDIA_TYPE}]
+        entry["describedby"] = [
+            {"href": manifest_url, "type": "application/json", "profile": MANIFEST_PROFILE}
+        ]
+        linkset = {"linkset": [entry]}
         return JSONResponse(linkset, media_type=_LINKSET_MEDIA_TYPE)
 
     return router
