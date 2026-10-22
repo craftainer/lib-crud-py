@@ -201,6 +201,25 @@ def test_xml_clone_draft_publish_restore_and_revisions() -> None:
     assert b"<revision>" in revisions.content
 
 
+@pytest.mark.parametrize("prefix", ["/heroes", "/heroes/xml"])
+def test_every_id_route_rejects_filters_next_to_the_id(prefix: str) -> None:
+    """clone, publish, restore and revisions with ?id= plus a filter are a 422, in both formats."""
+    created = client.post("/heroes", json={"name": "Orig", "powers": ["Flight"]}).json()
+    params = {"id": created["id"], "name": "other"}
+    calls = [
+        client.post(f"{prefix}/clone", params=params),
+        client.post(f"{prefix}/publish", params=params),
+        client.post(f"{prefix}/restore", params=params),
+        client.get(f"{prefix}/revisions", params=params),
+    ]
+    for response in calls:
+        assert response.status_code == 422, response.text
+    assert len(client.get("/heroes").json()) == 1  # nothing was cloned
+    # A reserved key next to the id is fine.
+    ok = client.get(f"{prefix}/revisions", params={"id": created["id"], "include_archived": "true"})
+    assert ok.status_code == 200
+
+
 def test_xml_publish_of_unowned_record_is_404() -> None:
     """Same guard as the JSON route: an unwritable record 404s."""
     client.post("/heroes/xml", content=_hero_xml("Mine"), headers=_XML_HEADERS)

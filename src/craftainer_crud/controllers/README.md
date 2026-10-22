@@ -75,7 +75,7 @@ are given — a request with **no** filters and no `id` is rejected (422 via
 `craftainer_crud.controllers.crud_actions`'s `resolve_list_or_get`/`resolve_update`/
 `resolve_delete` implement this id/filter/bulk decision once, shared by both
 factories; each wraps the same calls in its own response format (JSON body
-vs. an XML-rendered `Response`). Before a bulk update/delete actually runs,
+vs. an XML-rendered `Response`). A single-record get/update/delete/restore/clone/publish/revisions request (`id` given) with any non-reserved query key is rejected (422) instead of silently ignoring the filters; a float filter value of `nan`/`inf` is a 422 too. Before a bulk update/delete actually runs,
 `crud_actions.py` counts how many records the filters match
 (`CRUDLike.count`) and refuses the action (400) above
 `CrudConfig.bulk_action_max_matched` (default 1000, set by the host from `Settings`) — a
@@ -120,7 +120,7 @@ mirroring `crud_dependency`'s own shape) adds `GET <prefix>/events`: a
 `StreamingResponse` (`media_type="text/event-stream"`) of that resource's
 create/update/update_many/delete/delete_many/restore/restore_many
 activity, gated by the same `read_roles` dependency as the plain `GET`
-list route. The route resolves an optional `subscriber_id` query param
+list route. The route resolves an optional `subscriber_id` query param (honoured only if the server minted it for this resource, see `../interfaces/subscriber_ids.py`; otherwise a fresh id is issued)
 (falling back to the standard `Last-Event-ID` header on reconnect), calls
 `EventSource.subscribe`, and renders the result via `crud_router.py`'s
 private `_sse_events` — which uses `asyncio.wait` on a persisted
@@ -138,7 +138,8 @@ optional `?bucket=day|week|month` time-bucketed count series over
 `created_at`, and — for a resource carrying a `../models/mixins.py`
 mixin — a lifecycle breakdown) and `GET <prefix>/predict` (a naive
 ordinary-least-squares linear-regression forecast over that same
-time-bucketed series, projecting `?periods=` future buckets; `?field=`
+time-bucketed series, regressed on bucket time (whole buckets since the first, so
+gaps do not skew it; exact formula in `docs/manifest.md`), projecting `?periods=` future buckets; `?field=`
 targets a specific numeric field's per-bucket sum instead of record
 count). Both are gated by the same `read_roles` dependency as the plain
 `GET` list route. `craftainer_crud.controllers.crud_stats` holds the shared query

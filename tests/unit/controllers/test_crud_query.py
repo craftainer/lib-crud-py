@@ -21,6 +21,7 @@ from craftainer_crud.controllers.crud_query import (
     parse_include_archived,
     parse_include_unpublished,
     parse_sort,
+    reject_filters_with_id,
 )
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 
@@ -271,3 +272,52 @@ def test_field_specs_is_memoized_per_schema_class() -> None:
 
     assert field_specs(_A) is field_specs(_A)
     assert field_specs(_A) is not field_specs(_B)
+
+
+# --- finite floats ------------------------------------------------------------
+
+
+class _Scale(BaseModel):
+    """Schema with a float and an int field, to exercise the numeric casts."""
+
+    id: int
+    weight: float
+
+
+@pytest.mark.parametrize("raw", ["nan", "NaN", "inf", "-inf", "Infinity"])
+@pytest.mark.parametrize("suffix", ["", "__min", "__max"])
+def test_parse_filters_rejects_non_finite_floats(raw: str, suffix: str) -> None:
+    """NaN and the infinities are a 422 for a float field, never bound into a query."""
+    with pytest.raises(RequestValidationError) as excinfo:
+        parse_filters(_Scale, QueryParams(f"weight{suffix}={raw}"))
+    assert excinfo.value.errors()[0]["msg"] == "invalid filter value"
+
+
+def test_parse_filters_rejects_non_finite_float_inside_in() -> None:
+    """One non-finite member of `__in=` rejects the whole filter."""
+    with pytest.raises(RequestValidationError):
+        parse_filters(_Scale, QueryParams("weight__in=1.5,nan"))
+
+
+def test_parse_filters_accepts_finite_floats() -> None:
+    """A decimal (and an exponent) is a valid float filter value."""
+    clauses = parse_filters(_Scale, QueryParams("weight__min=1.5&weight__max=2e3"))
+    assert [c.value for c in clauses] == [1.5, 2000.0]
+
+
+# --- id together with filters -------------------------------------------------
+
+
+def test_reject_filters_with_id_allows_id_and_reserved_params() -> None:
+    """`id` alone, or next to the reserved flags, is not an id-with-filters request."""
+    reject_filters_with_id(QueryParams("id=5&include_archived=true&include_unpublished=1"))
+
+
+def test_reject_filters_with_id_names_each_filter_key_once() -> None:
+    """Every non-reserved key (recognised or not) is reported, a repeated key once."""
+    with pytest.raises(RequestValidationError) as excinfo:
+        reject_filters_with_id(QueryParams("id=5&label=a&label=b&nope__min=3"))
+    assert [e["loc"] for e in excinfo.value.errors()] == [
+        ("query", "label"),
+        ("query", "nope__min"),
+    ]

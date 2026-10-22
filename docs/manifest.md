@@ -92,6 +92,13 @@ converted to UTC. `sort=a,-b` is comma-separated, a leading `-` meaning
 descending. Reserved query keys are `skip`, `limit`, `sort`, `id`,
 `include_archived` and `include_unpublished`. An unknown field, an operator the
 field does not take, or an unparsable value is a client error, never ignored.
+For a float field (`number`) `nan` and `inf` are unparsable: `422`.
+
+**`?id=` takes no filters.** Every route that takes `?id=` (`GET`, `PATCH`, `DELETE`, `clone`, `publish`, `restore`, `revisions`) with `?id=` together with
+any non-reserved query key (a filter, recognised or not) is `422` (`loc`
+`["query", <key>]`, `filters cannot be combined with id`); nothing is read or
+written. Address one record by `id`, or many by filters, never both. The
+reserved keys may accompany `?id=`.
 
 ### Capabilities
 
@@ -122,6 +129,36 @@ it and pass it back as `resume_param`). Each later frame has an incrementing
 `id` and `data` of `{"resource", "record_id", "action", "snapshot", "timestamp"}`.
 The `id` numbers are informational; they do not resume a gap.
 
+Subscriber ids are minted by the server and are opaque to clients: 64 hex
+characters, 128 random bits plus a 128-bit HMAC-SHA256 tag over the resource and
+those bits (`HMAC-SHA256(secret, resource + 0x00 + nonce_hex)[:16]`), keyed by
+`CrudConfig.subscriber_secret` (at least 32 bytes; random per process when
+unset). A resume id the server did not mint for this resource (guessed, forged,
+from another resource, or minted under another secret, e.g. before a restart
+with a random secret) is ignored: the stream starts a fresh session under a new
+id, which the first frame carries. A client always stores the id from the first
+frame.
+
+### Forecast (`paths.predict`)
+
+An ordinary-least-squares line over the bucketed series, regressed on bucket
+**time**: `x_i` is the whole number of buckets between the first bucket's start
+and bucket `i`'s start (`day`: days; `week`: days / 7, floor; `month`:
+`12 * (year_i - year_0) + (month_i - month_0)`), so an empty bucket leaves a gap
+in `x` instead of shifting later points. With `n` points, `y_i` the bucket value
+and all sums accumulated left to right in IEEE-754 doubles (no compensated or
+pairwise summation):
+
+```
+mean_x = (x_0 + ... + x_{n-1}) / n          mean_y = (y_0 + ... + y_{n-1}) / n
+sxx = sum (x_i - mean_x) * (x_i - mean_x)   sxy = sum (x_i - mean_x) * (y_i - mean_y)
+slope = 0.0 if sxx == 0 else sxy / sxx      intercept = mean_y - slope * mean_x
+value_k = slope * (x_{n-1} + k) + intercept            for k = 1..periods
+```
+
+Projected bucket `k` starts `k` whole buckets after the last bucket. Fewer than
+2 buckets of history is `422`.
+
 ### Cache
 
 | Property | Meaning |
@@ -143,17 +180,17 @@ validation, a list of validation errors (`loc`, `msg`, `type`).
 
 | Operation | Success | Errors |
 | --- | --- | --- |
-| `GET base_path` (list, or one record with `?id=`) | `200`; `304` on a matching `If-None-Match` | `400`/`422` unrecognized filter or sort, bad value, bad limit; `401`; `403`; `404` unknown `?id=` |
+| `GET base_path` (list, or one record with `?id=`) | `200`; `304` on a matching `If-None-Match` | `400`/`422` unrecognized filter or sort, bad value (including `nan`/`inf`), bad limit, `?id=` with filters; `401`; `403`; `404` unknown `?id=` |
 | `POST base_path` | `201`, the record | `401`; `403`; `422` body invalid |
-| `PATCH base_path?id=` | `200`, the record, new `ETag` header | `404`; `412` stale `If-Match`; `423` record locked; `422` |
+| `PATCH base_path?id=` | `200`, the record, new `ETag` header | `404`; `412` stale `If-Match`; `423` record locked; `422` (including `?id=` with filters) |
 | `PATCH base_path?<filters>` (bulk) | `200` `{matched, ids}` | `400` no filters, or more than `bulk.max_matched` matches; `423` |
-| `DELETE base_path?id=` | `204` | `404`; `412`; `423` |
+| `DELETE base_path?id=` | `204` | `404`; `412`; `423`; `422` `?id=` with filters |
 | `DELETE base_path?<filters>` (bulk) | `200` `{matched, ids}` | as bulk `PATCH` |
-| `POST paths.clone?id=` | `201`, the copy | `404` |
+| `POST paths.clone?id=` | `201`, the copy | `404`; `422` `?id=` with filters |
 | `POST paths.draft` | `201`, the draft | `422` |
-| `POST paths.publish?id=` | `200`, the record | `404`; `422` still missing required fields |
-| `POST paths.restore` (`?id=` or filters) | `200` | `404`; `400` as bulk |
-| `GET paths.revisions?id=` | `200`, newest first | `404`/empty |
+| `POST paths.publish?id=` | `200`, the record | `404`; `422` still missing required fields, or `?id=` with filters |
+| `POST paths.restore` (`?id=` or filters) | `200` | `404`; `400` as bulk; `422` `?id=` with filters |
+| `GET paths.revisions?id=` | `200`, newest first | `404`/empty; `422` `?id=` with filters |
 | `GET paths.stats`, `paths.predict` | `200` | `422` bad `bucket`, `field` or `periods` |
 | `GET paths.filters` | `200`, the same information as `fields` (`kind` instead of `value_type`) | |
 | `GET paths.events` | `200` `text/event-stream` | |

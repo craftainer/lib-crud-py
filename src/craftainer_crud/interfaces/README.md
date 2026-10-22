@@ -87,7 +87,9 @@ CRUD class, only a model, a view, and a router that wires the two through
   about a record becoming visible again, unlike the revision log — see
   `EventSink`'s own docstring). `MQTTEventSink`/`MQTTEventSource` are the
   concrete adapters backing the real deployment (QoS 1, a persistent MQTT
-  session keyed by a client-supplied `subscriber_id` — see
+  session keyed by a server-minted, HMAC-signed `subscriber_id`
+  (`subscriber_ids.py`; a client can only hand one back, a forged id gets a fresh
+  session; key: `CrudConfig.subscriber_secret`) — see
   `docs/adrs/0015-mqtt-for-crud-events.md` for the full delivery-guarantee
   design and why MQTT was chosen over this app's existing Redis/Valkey
   service); `InMemoryEventSink` is the single `MODE=mock` adapter

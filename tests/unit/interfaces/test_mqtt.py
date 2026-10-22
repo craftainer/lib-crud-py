@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from craftainer_crud.interfaces.base import MQTTEventSink, MQTTEventSource, _background_tasks
+from craftainer_crud.interfaces.subscriber_ids import mint_subscriber_id
 
 # A stand-in for the broker credential the sink forwards; not a real secret.
 _FAKE_BROKER_CREDENTIAL = "p"
@@ -85,10 +86,11 @@ async def test_sink_publishes_an_enveloped_event_at_qos_1() -> None:
 async def test_source_resumes_a_persistent_session_and_streams_events() -> None:
     """subscribe() connects first, keys the session by subscriber id, and yields decoded events."""
     source = MQTTEventSource(hostname="broker", port=1883, resource="hero", keepalive=60)
-    subscriber_id, events = await source.subscribe("abc")
-    assert subscriber_id == "abc"
+    minted = mint_subscriber_id("hero")
+    subscriber_id, events = await source.subscribe(minted)
+    assert subscriber_id == minted
     (client,) = _FakeClient.instances
-    assert client.kwargs["identifier"] == "crud-events-hero-abc"
+    assert client.kwargs["identifier"] == f"crud-events-hero-{minted}"
     assert client.kwargs["clean_session"] is False
     assert client.subscribed == [("crud-events/hero", 1)]
 
@@ -105,4 +107,15 @@ async def test_source_issues_a_subscriber_id_when_none_is_given() -> None:
     assert subscriber_id
     assert _FakeClient.instances[0].kwargs["identifier"].endswith(subscriber_id)
     await events.aclose()  # type: ignore[attr-defined]
+    await asyncio.gather(*list(_background_tasks))
+
+
+async def test_source_replaces_a_forged_or_foreign_subscriber_id() -> None:
+    """A guessed id, or one minted for another resource, never names the broker session."""
+    source = MQTTEventSource(hostname="broker", port=1883, resource="hero", keepalive=60)
+    for forged in ("abc", mint_subscriber_id("quest")):
+        subscriber_id, events = await source.subscribe(forged)
+        assert subscriber_id != forged
+        assert _FakeClient.instances[-1].kwargs["identifier"] == f"crud-events-hero-{subscriber_id}"
+        await events.aclose()  # type: ignore[attr-defined]
     await asyncio.gather(*list(_background_tasks))

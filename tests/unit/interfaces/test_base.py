@@ -728,11 +728,12 @@ async def test_in_memory_event_sink_delivers_to_a_subscribed_queue() -> None:
     assert "timestamp" in event
 
 
-async def test_in_memory_event_sink_reuses_a_given_subscriber_id() -> None:
-    """subscribe() with an explicit subscriber_id echoes it back rather than issuing a new one."""
+async def test_in_memory_event_sink_reuses_a_server_minted_subscriber_id() -> None:
+    """subscribe() with an id this server minted echoes it back rather than issuing a new one."""
     sink = InMemoryEventSink()
-    subscriber_id, _ = await sink.subscribe("known-id")
-    assert subscriber_id == "known-id"
+    minted, _ = await sink.subscribe(None)
+    subscriber_id, _ = await sink.subscribe(minted)
+    assert subscriber_id == minted
 
 
 async def test_in_memory_event_sink_fans_out_to_every_subscriber() -> None:

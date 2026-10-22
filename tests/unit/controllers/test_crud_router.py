@@ -434,6 +434,39 @@ def test_json_router_bulk_delete_via_filters() -> None:
         del app.dependency_overrides[get_gadget_crud]
 
 
+def test_json_router_id_with_filters_is_rejected_and_touches_nothing() -> None:
+    """GET/PATCH/DELETE ?id= plus a filter is a 422, not a silent filter-ignoring mutation.
+
+    `DELETE ?id=1&name=other` used to delete record 1 whatever its name.
+    """
+    repository = _FakeGadgetRepository()
+    app.dependency_overrides[get_gadget_crud] = lambda: CRUDInterface(
+        schema=_Gadget, repository=repository
+    )
+    try:
+        created = client.post("/gadgets", json={"name": "apple", "tags": []}).json()
+        params = {"id": created["id"], "name": "other"}
+
+        for response in (
+            client.get("/gadgets", params=params),
+            client.patch("/gadgets", params=params, json={"name": "changed"}),
+            client.delete("/gadgets", params=params),
+        ):
+            assert response.status_code == 422
+            assert response.json()["detail"][0]["loc"] == ["query", "name"]
+
+        assert client.get("/gadgets", params={"id": created["id"]}).json()["name"] == "apple"
+        # Reserved flags next to an id are not filters.
+        assert (
+            client.get(
+                "/gadgets", params={"id": created["id"], "include_archived": "true"}
+            ).status_code
+            == 200
+        )
+    finally:
+        del app.dependency_overrides[get_gadget_crud]
+
+
 def test_json_router_bulk_update_rejected_over_row_cap(
     override_crud_config: CrudConfigOverride,
 ) -> None:

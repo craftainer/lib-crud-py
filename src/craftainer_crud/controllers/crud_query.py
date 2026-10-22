@@ -28,6 +28,7 @@ affects what's counted toward the integration/e2e coverage gates, not whether
 these lines run there.
 """
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -48,6 +49,8 @@ DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000
 
 _RESERVED_PARAMS = frozenset({"skip", "limit", "sort", "include_archived", "include_unpublished"})
+# Reserved plus `id`: the keys that are never a filter, whichever route reads them.
+_NON_FILTER_PARAMS = _RESERVED_PARAMS | {"id"}
 
 # A `field__regex=` filter reaches Postgres's `~` operator (SQLAlchemyRepository) or
 # Python's re.search (InMemoryRepository) verbatim -- an unbounded pattern is a ReDoS
@@ -208,11 +211,26 @@ def _cast_datetime(raw: str) -> datetime:
     return value
 
 
+def _cast_float(raw: str) -> float:
+    """Parse a float, refusing NaN and the infinities.
+
+    `float("nan")` bound into SQL sorts above every number (and `NaN = NaN` is true in
+    Postgres), turning a range filter or a bulk target into the wrong set, so a
+    non-finite value is rejected like any other unparseable one.
+    """
+    value = float(raw)
+    if not math.isfinite(value):
+        raise ValueError(raw)
+    return value
+
+
 def _cast_number(python_type: object, raw: str) -> object:
     if isinstance(python_type, type) and issubclass(python_type, datetime):
         return _cast_datetime(raw)
     if isinstance(python_type, type) and issubclass(python_type, date):  # pragma: no cover
         return date.fromisoformat(raw)  # see module docstring: Hero has no plain-date field
+    if isinstance(python_type, type) and issubclass(python_type, float):
+        return _cast_float(raw)
     assert callable(python_type)  # noqa: S101 -- python_type is always int or float here
     return python_type(raw)
 
@@ -281,6 +299,27 @@ def parse_filters(schema: type[BaseModel], params: QueryParams) -> list[FilterCl
     if errors:
         raise RequestValidationError(errors)
     return clauses
+
+
+def reject_filters_with_id(params: QueryParams) -> None:
+    """Raise 422 when a request addressing one record (`?id=`) also carries filters.
+
+    A single-record get/update/delete ignores filters, so `DELETE ?id=5&status=draft`
+    would delete record 5 whatever its status -- a guard the caller wrote that silently
+    does nothing. Any key other than `id` and the reserved flags counts as a filter,
+    recognised or not, and is refused before anything is read or written.
+    """
+    keys = [key for key in dict.fromkeys(params.keys()) if key not in _NON_FILTER_PARAMS]
+    if keys:
+        errors = [
+            {
+                "loc": ("query", key),
+                "msg": "filters cannot be combined with id",
+                "type": "value_error",
+            }
+            for key in keys
+        ]
+        raise RequestValidationError(errors)
 
 
 def parse_sort(schema: type[BaseModel], params: QueryParams) -> list[SortClause]:
@@ -361,4 +400,5 @@ __all__: Sequence[str] = (
     "parse_include_archived",
     "parse_include_unpublished",
     "parse_sort",
+    "reject_filters_with_id",
 )

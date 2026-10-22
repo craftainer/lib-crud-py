@@ -232,3 +232,58 @@ def test_forecast_advances_week_buckets_by_seven_days() -> None:
     assert datetime.fromisoformat(predictions[0].bucket_start) - datetime.fromisoformat(
         series[-1].bucket_start
     ) == timedelta(days=7)
+
+
+def test_forecast_regresses_on_bucket_time_so_a_gap_does_not_skew_the_trend() -> None:
+    """Days 1, 2 and 4 of a perfect 1-per-day trend (day 3 is empty) still forecast 5, 6.
+
+    Regressing on position in the series (0, 1, 2) instead of time (0, 1, 3) would bend the
+    slope and project about 4.7 for day 5.
+    """
+    series = [
+        BucketValue(bucket_start="2024-01-01T00:00:00", value=1.0),
+        BucketValue(bucket_start="2024-01-02T00:00:00", value=2.0),
+        BucketValue(bucket_start="2024-01-04T00:00:00", value=4.0),
+    ]
+    predictions = forecast(series, periods=2, bucket=TimeBucket.DAY)
+    assert [p.bucket_start for p in predictions] == ["2024-01-05T00:00:00", "2024-01-06T00:00:00"]
+    assert [p.value for p in predictions] == pytest.approx([5.0, 6.0])
+
+
+def test_forecast_week_gap_uses_whole_weeks() -> None:
+    """Weeks 0, 1 and 3 (offsets in whole weeks) of a 2-per-week trend continue at 8, 10."""
+    series = [
+        BucketValue(bucket_start="2024-01-01T00:00:00", value=0.0),
+        BucketValue(bucket_start="2024-01-08T00:00:00", value=2.0),
+        BucketValue(bucket_start="2024-01-22T00:00:00", value=6.0),
+    ]
+    predictions = forecast(series, periods=2, bucket=TimeBucket.WEEK)
+    assert [p.value for p in predictions] == pytest.approx([8.0, 10.0])
+
+
+def test_forecast_month_gap_counts_calendar_months_across_a_year_boundary() -> None:
+    """Nov, Dec and Feb (offsets 0, 1, 3) of a 3-per-month trend continue at 12, 15."""
+    series = [
+        BucketValue(bucket_start="2023-11-01T00:00:00", value=0.0),
+        BucketValue(bucket_start="2023-12-01T00:00:00", value=3.0),
+        BucketValue(bucket_start="2024-02-01T00:00:00", value=9.0),
+    ]
+    predictions = forecast(series, periods=2, bucket=TimeBucket.MONTH)
+    assert [p.bucket_start for p in predictions] == ["2024-03-01T00:00:00", "2024-04-01T00:00:00"]
+    assert [p.value for p in predictions] == pytest.approx([12.0, 15.0])
+
+
+def test_forecast_pins_the_documented_formula() -> None:
+    """A noisy series with a gap gives this value; the Rust server must reproduce it.
+
+    x = 0, 1, 4, 5 and y = 3, 1, 7, 4 give mean_x = 2.5, mean_y = 3.75, sxx = 17,
+    sxy = 11.5, so slope = 23/34 and the value at x = 6 is 104/17.
+    """
+    series = [
+        BucketValue(bucket_start="2024-01-01T00:00:00", value=3.0),
+        BucketValue(bucket_start="2024-01-02T00:00:00", value=1.0),
+        BucketValue(bucket_start="2024-01-05T00:00:00", value=7.0),
+        BucketValue(bucket_start="2024-01-06T00:00:00", value=4.0),
+    ]
+    (prediction,) = forecast(series, periods=1, bucket=TimeBucket.DAY)
+    assert prediction.value == pytest.approx(104 / 17, rel=1e-15)
