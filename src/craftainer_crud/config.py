@@ -45,11 +45,14 @@ class CrudConfig:
     like any signing key: whoever holds it can mint ids."""
 
     def __post_init__(self) -> None:
-        """Refuse a subscriber secret too short to be a signing key."""
-        if (
-            self.subscriber_secret is not None
-            and len(self.subscriber_secret) < MIN_SUBSCRIBER_SECRET_LEN
-        ):
+        """Refuse a subscriber secret that is not bytes or too short to be a signing key."""
+        secret = self.subscriber_secret
+        if secret is None:
+            return
+        if not isinstance(secret, bytes):
+            msg = "subscriber_secret must be bytes"
+            raise TypeError(msg)
+        if len(secret) < MIN_SUBSCRIBER_SECRET_LEN:
             msg = f"subscriber_secret must be at least {MIN_SUBSCRIBER_SECRET_LEN} bytes"
             raise ValueError(msg)
 

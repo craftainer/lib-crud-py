@@ -93,6 +93,8 @@ def test_config_rejects_a_short_subscriber_secret() -> None:
     """A secret under 32 bytes is refused when the config is built."""
     with pytest.raises(ValueError, match="at least 32 bytes"):
         CrudConfig(subscriber_secret=b"short")
+    with pytest.raises(TypeError, match="must be bytes"):
+        CrudConfig(subscriber_secret="s" * 40)  # type: ignore[arg-type]
     assert CrudConfig(subscriber_secret=_SECRET).subscriber_secret == _SECRET
     assert MIN_SUBSCRIBER_SECRET_LEN == 32
 
