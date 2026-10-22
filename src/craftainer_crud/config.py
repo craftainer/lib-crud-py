@@ -46,7 +46,7 @@ class CrudConfig:
 
     def __post_init__(self) -> None:
         """Refuse a subscriber secret that is not bytes or too short to be a signing key."""
-        secret = self.subscriber_secret
+        secret: object = self.subscriber_secret
         if secret is None:
             return
         if not isinstance(secret, bytes):
