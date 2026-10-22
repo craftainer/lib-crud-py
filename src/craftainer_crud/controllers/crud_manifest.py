@@ -131,15 +131,17 @@ def api_catalog_router(
     `manifest_url` is the manifest's URL as a client reaches it (for example
     `/api/_crud/manifest`). `openapi_url` is the OpenAPI document's URL, advertised as the
     optional `service-desc` link (RFC 9727): by default it follows the serving app's own
-    `openapi_url` (so `FastAPI(openapi_url=None)` leaves no dangling link, and a custom path
-    is advertised as is); a string overrides it; `None` omits `service-desc`. `anchor` is
+    `openapi_url`, or none for an app without one (so `FastAPI(openapi_url=None)` leaves no
+    dangling link, and a custom path is advertised as is); a string overrides it; `None` omits `service-desc`. `anchor` is
     the API's base URL; by default it is the base URL the request arrived on.
     """
     router = APIRouter()
 
     @router.get("/.well-known/api-catalog", include_in_schema=False, response_model=None)
     async def get_api_catalog(request: Request) -> JSONResponse:
-        service_desc = request.app.openapi_url if openapi_url is FROM_APP else openapi_url
+        service_desc = (
+            getattr(request.app, "openapi_url", None) if openapi_url is FROM_APP else openapi_url
+        )
         entry: dict[str, Any] = {
             "anchor": anchor if anchor is not None else str(request.base_url).rstrip("/")
         }

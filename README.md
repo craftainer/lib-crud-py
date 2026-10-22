@@ -72,15 +72,28 @@ registry = ManifestRegistry()
 router = build_resource_router(
     ...,  # as before
     manifest=ManifestOptions(
-        registry=registry, name="heroes", api_version="v2", model=HeroModel,
-        owner_scoped=True, read_roles=["viewer"], write_roles=["editor"], delete_roles=["maintainer"],
+        registry=registry,
+        name="heroes",
+        api_version="v2",
+        model=HeroModel,
+        owner_scoped=True,
+        read_roles=["viewer"],
+        write_roles=["editor"],
+        delete_roles=["maintainer"],
     ),
 )
-app.include_router(crud_manifest_router(
-    registry, service_name="my-api", service_version="1.4.0", stats_ttl=30,
-    oidc_discovery_url="https://idp/.well-known/openid-configuration",
-))  # GET /api/_crud/manifest
-app.include_router(api_catalog_router(manifest_url="/api/_crud/manifest"))  # GET /.well-known/api-catalog
+app.include_router(
+    crud_manifest_router(
+        registry,
+        service_name="my-api",
+        service_version="1.4.0",
+        stats_ttl=30,
+        oidc_discovery_url="https://idp/.well-known/openid-configuration",
+    )
+)  # GET /api/_crud/manifest
+app.include_router(
+    api_catalog_router(manifest_url="/api/_crud/manifest")
+)  # GET /.well-known/api-catalog
 ```
 
 The factories register what they build, so the manifest cannot list a route that

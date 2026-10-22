@@ -333,6 +333,15 @@ def test_api_catalog_service_desc_follows_the_apps_openapi_url() -> None:
     assert _catalog_entry()["service-desc"][0]["href"] == "/openapi.json"
 
 
+def test_api_catalog_default_omits_service_desc_for_an_app_without_openapi_url() -> None:
+    """A host app that has no `openapi_url` attribute still gets an answer, without the link."""
+    app = FastAPI()
+    del app.openapi_url
+    app.include_router(api_catalog_router(manifest_url="/m"))
+    entry = TestClient(app).get("/.well-known/api-catalog").json()["linkset"][0]
+    assert "service-desc" not in entry
+
+
 def test_api_catalog_openapi_url_none_omits_and_string_overrides_the_app() -> None:
     """An explicit argument wins over the app's setting."""
     app = FastAPI()
