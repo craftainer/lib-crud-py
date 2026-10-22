@@ -27,6 +27,11 @@ GET /api/_crud/manifest               application/json
 A client fetches the catalog, picks the `describedby` link whose `profile` it
 understands, and fetches the manifest. The catalog needs no authentication.
 
+`service-desc` is optional in RFC 9727 and is advertised only when the app serves an
+OpenAPI document: `api_catalog_router` takes the serving app's `openapi_url` by default
+(`None` omits the link, a custom path is used as is). Its `openapi_url` argument
+overrides that with a string, or omits the link with `None`.
+
 The manifest requires the same roles as reading each resource it lists. It is
 **filtered to the caller**: a resource the caller cannot read is omitted
 entirely (not marked, not refused), so a client never learns a hidden resource

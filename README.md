@@ -72,20 +72,38 @@ registry = ManifestRegistry()
 router = build_resource_router(
     ...,  # as before
     manifest=ManifestOptions(
-        registry=registry, name="heroes", api_version="v2", model=HeroModel,
-        owner_scoped=True, read_roles=["viewer"], write_roles=["editor"], delete_roles=["maintainer"],
+        registry=registry,
+        name="heroes",
+        api_version="v2",
+        model=HeroModel,
+        owner_scoped=True,
+        read_roles=["viewer"],
+        write_roles=["editor"],
+        delete_roles=["maintainer"],
     ),
 )
-app.include_router(crud_manifest_router(
-    registry, service_name="my-api", service_version="1.4.0", stats_ttl=30,
-    oidc_discovery_url="https://idp/.well-known/openid-configuration",
-))  # GET /api/_crud/manifest
-app.include_router(api_catalog_router(manifest_url="/api/_crud/manifest"))  # GET /.well-known/api-catalog
+app.include_router(
+    crud_manifest_router(
+        registry,
+        service_name="my-api",
+        service_version="1.4.0",
+        stats_ttl=30,
+        oidc_discovery_url="https://idp/.well-known/openid-configuration",
+    )
+)  # GET /api/_crud/manifest
+app.include_router(
+    api_catalog_router(manifest_url="/api/_crud/manifest")
+)  # GET /.well-known/api-catalog
 ```
 
 The factories register what they build, so the manifest cannot list a route that
 is not mounted. It is filtered to the caller by running each resource's own
 `read_roles` dependency, and carries an `ETag` over that filtered body.
+
+The catalog's `service-desc` link follows the serving app's `openapi_url`
+(RFC 9727 makes the link optional): `FastAPI(openapi_url=None)` omits it, a custom
+path is advertised as is. Pass `openapi_url="/spec.json"` to override, or
+`openapi_url=None` to omit it regardless of the app.
 
 ## Model changes need an app-side migration
 

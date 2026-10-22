@@ -319,6 +319,42 @@ def test_api_catalog_takes_explicit_anchor_and_openapi_url_and_needs_no_auth() -
     assert body["describedby"][0]["href"] == "/m"
 
 
+def _catalog_entry(**app_kwargs: Any) -> dict[str, Any]:  # noqa: ANN401
+    app = FastAPI(**app_kwargs)
+    app.include_router(api_catalog_router(manifest_url="/m"))
+    entry: dict[str, Any] = TestClient(app).get("/.well-known/api-catalog").json()["linkset"][0]
+    return entry
+
+
+def test_api_catalog_service_desc_follows_the_apps_openapi_url() -> None:
+    """Default: omitted when the app disables OpenAPI, the custom path when it moves it."""
+    assert "service-desc" not in _catalog_entry(openapi_url=None)
+    assert _catalog_entry(openapi_url="/spec.json")["service-desc"][0]["href"] == "/spec.json"
+    assert _catalog_entry()["service-desc"][0]["href"] == "/openapi.json"
+
+
+def test_api_catalog_default_omits_service_desc_for_an_app_without_openapi_url() -> None:
+    """A host app that has no `openapi_url` attribute still gets an answer, without the link."""
+    app = FastAPI()
+    del app.openapi_url
+    app.include_router(api_catalog_router(manifest_url="/m"))
+    entry = TestClient(app).get("/.well-known/api-catalog").json()["linkset"][0]
+    assert "service-desc" not in entry
+
+
+def test_api_catalog_openapi_url_none_omits_and_string_overrides_the_app() -> None:
+    """An explicit argument wins over the app's setting."""
+    app = FastAPI()
+    app.include_router(api_catalog_router(manifest_url="/m", openapi_url=None))
+    entry = TestClient(app).get("/.well-known/api-catalog").json()["linkset"][0]
+    assert "service-desc" not in entry
+    assert entry["describedby"][0]["href"] == "/m"
+    app = FastAPI(openapi_url=None)
+    app.include_router(api_catalog_router(manifest_url="/m", openapi_url="/x.json"))
+    entry = TestClient(app).get("/.well-known/api-catalog").json()["linkset"][0]
+    assert entry["service-desc"][0]["href"] == "/x.json"
+
+
 def test_catalog_is_not_in_the_openapi_document_but_the_manifest_is() -> None:
     """The well-known route stays out of the docs; the manifest route is documented."""
     app, _ = build_server()
