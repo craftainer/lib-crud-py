@@ -15,7 +15,7 @@ NAME := $(shell python3 -c 'import tomllib; print(tomllib.load(open("pyproject.t
 ASSET := dist/$(NAME)-$(RELEASE_VERSION)
 
 # renovate: datasource=docker depName=anchore/syft
-SYFT_VERSION := v1.52.0
+SYFT_VERSION := v1.55.0
 
 # release.yml runs build/sbom/publish on the bare runner, which has docker but
 # no uv; release-check runs in the devcontainer, which has uv. So use the
@@ -23,7 +23,7 @@ SYFT_VERSION := v1.52.0
 # minor as .devcontainer/Dockerfile). The OIDC variables are forwarded so
 # `uv publish --trusted-publishing always` works inside the container.
 # renovate: datasource=docker depName=ghcr.io/astral-sh/uv
-UV_VERSION := 0.13.0
+UV_VERSION := 0.13.5
 UV_IMAGE := ghcr.io/astral-sh/uv:$(UV_VERSION)-python3.14-trixie-slim
 UV := $(shell command -v uv >/dev/null 2>&1 && echo uv || echo \
 	docker run --rm -u $$(id -u):$$(id -g) -v "$(CURDIR):/src" -w /src \
