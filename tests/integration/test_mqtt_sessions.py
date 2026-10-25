@@ -7,7 +7,7 @@ import os
 import threading
 import time
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 import aiomqtt
@@ -18,7 +18,12 @@ from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
 from craftainer_crud.controllers import crud_router as crud_router_module
-from craftainer_crud.interfaces.base import MQTTEventSink, MQTTEventSource, _background_tasks
+from craftainer_crud.interfaces.base import (
+    EventIterator,
+    MQTTEventSink,
+    MQTTEventSource,
+    _background_tasks,
+)
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -186,7 +191,7 @@ async def test_without_session_ttl_the_session_survives_the_short_wait() -> None
 
 async def _subscribed_client(
     durable: bool,
-) -> tuple[MQTTEventSource, AsyncIterator[dict[str, object]], aiomqtt.Client]:
+) -> tuple[MQTTEventSource, EventIterator[dict[str, Any]], aiomqtt.Client]:
     """Subscribe against the broker, capturing the aiomqtt client the source builds."""
     assert _HOST
     created: list[aiomqtt.Client] = []
@@ -215,7 +220,7 @@ async def _assert_disconnected(client: aiomqtt.Client) -> None:
 async def test_unstarted_iterator_is_released_by_aclose() -> None:
     """aclose() before the first step disconnects the client and stops its network loop."""
     _, events, client = await _subscribed_client(durable=False)
-    await events.aclose()  # type: ignore[attr-defined]
+    await events.aclose()
     await _assert_disconnected(client)
 
 
@@ -230,10 +235,7 @@ async def test_unstarted_iterator_is_released_by_garbage_collection() -> None:
 async def test_sse_events_cancelled_before_the_first_event_releases_the_client() -> None:
     """The SSE stream, cancelled right after its first frame, leaves no client connected."""
     _, events, client = await _subscribed_client(durable=False)
-    stream = cast(
-        "AsyncGenerator[str]",
-        crud_router_module._sse_events(cast("Request", _NeverDisconnected()), "sub", events),
-    )
+    stream = crud_router_module._sse_events(cast("Request", _NeverDisconnected()), "sub", events)
     assert (await anext(stream)).startswith("id: 0")
     await stream.aclose()
     await _assert_disconnected(client)

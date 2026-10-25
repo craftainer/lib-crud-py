@@ -5,7 +5,7 @@ import gc
 import json
 import sys
 import types
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import pytest
@@ -129,7 +129,7 @@ async def test_source_is_durable_by_default() -> None:
     source = MQTTEventSource(hostname="broker", port=1883, resource="hero", keepalive=60)
     _, events = await source.subscribe(None)
     assert _FakeClient.instances[0].kwargs["clean_session"] is False
-    await events.aclose()  # type: ignore[attr-defined]
+    await events.aclose()
     await asyncio.gather(*list(_background_tasks))
 
 
@@ -139,7 +139,7 @@ async def test_source_without_session_ttl_stays_on_mqtt_311() -> None:
     _, events = await source.subscribe(None)
     kwargs = _FakeClient.instances[0].kwargs
     assert not {"protocol", "clean_start", "properties"} & kwargs.keys()
-    await events.aclose()  # type: ignore[attr-defined]
+    await events.aclose()
     await asyncio.gather(*list(_background_tasks))
 
 
@@ -155,7 +155,7 @@ async def test_durable_source_with_session_ttl_connects_over_v5_with_an_expiry()
     assert client.kwargs["properties"].SessionExpiryInterval == 900
     assert "clean_session" not in client.kwargs
     assert client.subscribed == [("crud-events/hero", 1)]
-    await events.aclose()  # type: ignore[attr-defined]
+    await events.aclose()
     await asyncio.gather(*list(_background_tasks))
 
 
@@ -168,7 +168,7 @@ async def test_transient_source_ignores_session_ttl() -> None:
     kwargs = _FakeClient.instances[0].kwargs
     assert kwargs["clean_session"] is True
     assert not {"protocol", "clean_start", "properties"} & kwargs.keys()
-    await events.aclose()  # type: ignore[attr-defined]
+    await events.aclose()
     await asyncio.gather(*list(_background_tasks))
 
 
@@ -187,7 +187,7 @@ async def test_source_issues_a_subscriber_id_when_none_is_given() -> None:
     subscriber_id, events = await source.subscribe(None)
     assert subscriber_id
     assert _FakeClient.instances[0].kwargs["identifier"].endswith(subscriber_id)
-    await events.aclose()  # type: ignore[attr-defined]
+    await events.aclose()
     await asyncio.gather(*list(_background_tasks))
 
 
@@ -198,15 +198,14 @@ async def test_source_replaces_a_forged_or_foreign_subscriber_id() -> None:
         subscriber_id, events = await source.subscribe(forged)
         assert subscriber_id != forged
         assert _FakeClient.instances[-1].kwargs["identifier"] == f"crud-events-hero-{subscriber_id}"
-        await events.aclose()  # type: ignore[attr-defined]
+        await events.aclose()
     await asyncio.gather(*list(_background_tasks))
 
 
 async def test_aclose_before_the_first_step_disconnects_the_client() -> None:
     """An iterator closed without ever being iterated still releases its client."""
     source = MQTTEventSource(hostname="broker", port=1883, resource="hero", keepalive=60)
-    _, subscription = await source.subscribe(None)
-    events = cast("AsyncGenerator[dict[str, Any]]", subscription)
+    _, events = await source.subscribe(None)
     (client,) = _FakeClient.instances
     await events.aclose()
     await asyncio.gather(*list(_background_tasks))
@@ -248,7 +247,7 @@ async def test_aclose_while_a_step_is_running_still_releases_the_client() -> Non
     client.block = True
     step = asyncio.ensure_future(anext(events))
     await asyncio.sleep(0)
-    await events.aclose()  # type: ignore[attr-defined]
+    await events.aclose()
     await asyncio.gather(*list(_background_tasks))
     assert client.closed
     step.cancel()

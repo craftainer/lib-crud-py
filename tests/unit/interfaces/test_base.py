@@ -6,7 +6,7 @@ to Hero/SQLAlchemy at all, to prove the CRUD interface is genuinely generic.
 
 import asyncio
 import ssl
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -780,7 +780,7 @@ async def test_in_memory_event_sink_drops_queue_when_subscriber_stops_consuming(
     # `finally` against) without waiting forever on its empty queue.
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(events.__anext__(), timeout=0.01)
-    await cast("AsyncGenerator[dict[str, Any]]", events).aclose()
+    await events.aclose()
 
     assert subscriber_id not in sink._queues
 

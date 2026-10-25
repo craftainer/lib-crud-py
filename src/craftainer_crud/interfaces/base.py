@@ -113,6 +113,20 @@ class EventSink(Protocol):
         ...
 
 
+class EventIterator[T](AsyncIterator[T], Protocol):
+    """The async iterator `EventSource.subscribe` returns: an `AsyncIterator` you can `aclose()`.
+
+    `subscribe()` acquires its resources before returning, so the caller must be able to
+    release them even if it never iterates: call `aclose()` (for example with
+    `contextlib.aclosing`). Any async generator satisfies this protocol structurally,
+    because generators have `aclose()`.
+    """
+
+    async def aclose(self) -> None:
+        """Release what the subscription holds; safe to call more than once."""
+        ...
+
+
 class EventSource(Protocol):
     """Opt-in subscribe-side counterpart to EventSink, for `GET <prefix>/events`.
 
@@ -125,7 +139,7 @@ class EventSource(Protocol):
 
     async def subscribe(
         self, subscriber_id: str | None, *, durable: bool = True
-    ) -> tuple[str, AsyncIterator[dict[str, Any]]]:
+    ) -> tuple[str, EventIterator[dict[str, Any]]]:
         """Resolve `subscriber_id` (issuing a new one if None, or if it is not an id this
         server minted for this resource -- see craftainer_crud.interfaces.subscriber_ids)
         and return it alongside
@@ -221,7 +235,7 @@ class _ReleasingEvents:
 
     def __init__(
         self,
-        make_events: Callable[[Callable[[], None]], AsyncIterator[dict[str, Any]]],
+        make_events: Callable[[Callable[[], None]], AsyncGenerator[dict[str, Any]]],
         release: Callable[[], None],
     ) -> None:
         released = False
@@ -247,7 +261,7 @@ class _ReleasingEvents:
         # further await here is cancelled again, but the release has already been started.
         self._release()
         try:
-            await cast("AsyncGenerator[dict[str, Any]]", self._events).aclose()
+            await self._events.aclose()
         except RuntimeError:
             # A `__anext__()` is still running (a cancelled consumer task that has not
             # unwound yet); that task's cancellation runs the generator's `finally`.
@@ -377,7 +391,7 @@ class MQTTEventSource:
 
     async def subscribe(
         self, subscriber_id: str | None, *, durable: bool = True
-    ) -> tuple[str, AsyncIterator[dict[str, Any]]]:
+    ) -> tuple[str, EventIterator[dict[str, Any]]]:
         """Resolve subscriber_id, connect and subscribe (a persistent session, or a clean
         one when `durable=False`), and return it with an async iterator of event
         envelopes from that point on.
@@ -437,7 +451,7 @@ class MQTTEventSource:
 
     async def _events(
         self, client: aiomqtt.Client, release: Callable[[], None]
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """Yield decoded event envelopes from `client`'s already-subscribed session,
         disconnecting once the caller stops consuming (return, exception, or
         cancellation -- see `subscribe()`'s own docstring for why connecting happens
@@ -552,7 +566,7 @@ class InMemoryEventSink:
 
     async def subscribe(
         self, subscriber_id: str | None, *, durable: bool = True
-    ) -> tuple[str, AsyncIterator[dict[str, Any]]]:
+    ) -> tuple[str, EventIterator[dict[str, Any]]]:
         """Register a queue under `subscriber_id`, or a newly minted id if it is None or forged.
 
         `durable` is accepted for EventSource compatibility and has no effect: the queue is
@@ -572,7 +586,7 @@ class InMemoryEventSink:
 
     async def _events(
         self, queue: asyncio.Queue[dict[str, Any]], release: Callable[[], None]
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """Yield events as they're published, forever -- caller stops iterating on disconnect.
 
         `finally` drops this subscriber's queue from `self._queues` once the caller

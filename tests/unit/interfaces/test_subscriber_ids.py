@@ -1,5 +1,6 @@
 """Unit test: server-minted, HMAC-signed, resource-scoped subscriber ids."""
 
+import contextlib
 import gc
 import hashlib
 import hmac
@@ -126,7 +127,7 @@ async def test_in_memory_sink_aclose_before_iterating_drops_the_queue() -> None:
     sink = InMemoryEventSink(resource="hero")
     _, events = await sink.subscribe(None)
     assert len(sink._queues) == 1
-    await events.aclose()  # type: ignore[attr-defined]
+    await events.aclose()
     assert sink._queues == {}
 
 
@@ -144,7 +145,17 @@ async def test_in_memory_sink_release_leaves_a_re_registered_queue_alone() -> No
     sink = InMemoryEventSink(resource="hero")
     subscriber_id, old = await sink.subscribe(None)
     _, new = await sink.subscribe(subscriber_id)
-    await old.aclose()  # type: ignore[attr-defined]
+    await old.aclose()
     assert list(sink._queues) == [subscriber_id]
-    await new.aclose()  # type: ignore[attr-defined]
+    await new.aclose()
+    assert sink._queues == {}
+
+
+async def test_event_iterator_works_with_contextlib_aclosing_without_casts() -> None:
+    """The documented usage type-checks: `aclosing` needs only the `aclose` EventIterator has."""
+    sink = InMemoryEventSink(resource="hero")
+    _, events = await sink.subscribe(None)
+    async with contextlib.aclosing(events):
+        await sink.publish(resource="hero", record_id=3, action="create", snapshot={})
+        assert (await anext(events))["record_id"] == 3
     assert sink._queues == {}
