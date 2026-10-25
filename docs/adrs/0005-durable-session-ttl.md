@@ -47,5 +47,6 @@ broker-side with `max_session_expiry_interval`.
   What the broker does with the expiry of a session created over v5 is broker-specific
   and was not verified; treat such sessions as unbounded until they are drained, and keep
   the broker-side backstop.
-- The v5 path imports `paho.mqtt` directly. paho is aiomqtt 2.x's own dependency (pinned
-  `aiomqtt>=2.5.1,<3`), so it is not declared separately.
+- The v5 path imports `paho.mqtt` directly, so `paho-mqtt>=2.1.0,<3` (the range aiomqtt
+  2.5.1 requires) is declared in the `mqtt` extra rather than left to aiomqtt's own
+  dependencies.
