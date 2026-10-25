@@ -5,6 +5,7 @@ the in-memory repository and the test Hero resource, then walks one record throu
 lifecycle in each format -- the routes a host app's end-to-end tests would otherwise cover.
 """
 
+import re
 from collections.abc import Iterator
 from typing import Annotated
 
@@ -139,6 +140,77 @@ def test_json_publish_of_unowned_record_is_404() -> None:
     hero = client.post("/heroes", json={"name": "Mine", "powers": ["Flight"]}).json()
     _heroes._records[hero["id"]].owner_id = "someone-else"
     assert client.post("/heroes/publish", params={"id": hero["id"]}).status_code == 404
+
+
+@pytest.mark.parametrize("prefix", ["/heroes", "/heroes/xml"])
+def test_list_only_archived(prefix: str) -> None:
+    """?only_archived=true lists just archived rows, with filters/sort/paging; default unchanged."""
+    ids = {
+        name: client.post("/heroes", json={"name": name, "powers": ["Flight"]}).json()["id"]
+        for name in ("Live", "ArchA", "ArchB")
+    }
+    for name in ("ArchA", "ArchB"):
+        client.delete("/heroes", params={"id": ids[name]})
+
+    def names(**params: str) -> list[str]:
+        response = client.get(prefix, params=params)
+        assert response.status_code == 200
+        if prefix.endswith("xml"):
+            return re.findall(r"<name>([^<]*)</name>", response.text)
+        return [hero["name"] for hero in response.json()]
+
+    assert names() == ["Live"]
+    assert names(include_archived="true") == ["Live", "ArchA", "ArchB"]
+    assert names(only_archived="true") == ["ArchA", "ArchB"]
+    assert names(only_archived="true", include_archived="true") == ["ArchA", "ArchB"]
+    assert names(only_archived="false") == ["Live"]
+    assert names(only_archived="true", name="ArchB") == ["ArchB"]
+    assert names(only_archived="true", name="Live") == []
+    assert names(only_archived="true", sort="-name", limit="1") == ["ArchB"]
+    assert names(only_archived="true", sort="-name", limit="1", skip="1") == ["ArchA"]
+
+
+@pytest.mark.parametrize("prefix", ["/heroes", "/heroes/xml"])
+def test_list_only_archived_rejects_contradiction_and_bad_values(prefix: str) -> None:
+    """only_archived=true with an explicit include_archived=false is a 422; so is a bad value."""
+    contradictory = client.get(
+        prefix, params={"only_archived": "true", "include_archived": "false"}
+    )
+    assert contradictory.status_code == 422
+    assert contradictory.json()["detail"][0]["loc"] == ["query", "only_archived"]
+    assert client.get(prefix, params={"only_archived": "maybe"}).status_code == 422
+    # Also with ?id=: the pair and the flag alone are both rejected.
+    hero = client.post("/heroes", json={"name": "Solo", "powers": ["Flight"]}).json()
+    pair = {"id": hero["id"], "only_archived": "true", "include_archived": "false"}
+    assert client.get(prefix, params=pair).status_code == 422
+    assert client.get(prefix, params={"id": hero["id"], "only_archived": "true"}).status_code == 422
+
+
+@pytest.mark.parametrize("prefix", ["/heroes", "/heroes/xml"])
+def test_only_archived_is_rejected_where_it_cannot_apply(prefix: str) -> None:
+    """Writes and /stats answer 422 instead of silently acting on live rows."""
+    hero = client.post("/heroes", json={"name": "Live", "powers": ["Flight"]}).json()
+    params = {"only_archived": "true"}
+    for response in (
+        client.delete(prefix, params={"name": "Live", **params}),
+        client.delete(prefix, params={"id": hero["id"], **params}),
+        client.patch(
+            prefix,
+            params={"name": "Live", **params},
+            content=b"<hero><power_level>1</power_level></hero>"
+            if prefix.endswith("xml")
+            else b'{"power_level": 1}',
+            headers=_XML_HEADERS
+            if prefix.endswith("xml")
+            else {"Content-Type": "application/json"},
+        ),
+        client.post(f"{prefix}/restore", params={"name": "Live", **params}),
+        client.get(f"{prefix}/stats", params=params),
+    ):
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["loc"] == ["query", "only_archived"]
+    assert client.get("/heroes", params={"id": hero["id"]}).status_code == 200
+    assert client.get(f"{prefix}/stats", params={"only_archived": "false"}).status_code == 200
 
 
 def test_json_restore_single_and_bulk() -> None:

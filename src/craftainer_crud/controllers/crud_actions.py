@@ -20,8 +20,10 @@ from craftainer_crud.controllers.crud_query import (
     parse_filters,
     parse_include_archived,
     parse_include_unpublished,
+    parse_only_archived,
     parse_sort,
     reject_filters_with_id,
+    reject_only_archived,
 )
 from craftainer_crud.interfaces.base import CRUDLike
 from craftainer_crud.repositories.base import RecordLockedError
@@ -88,14 +90,17 @@ async def resolve_list_or_get(
 ) -> Any:  # BaseModel | list[BaseModel], see module docstring
     """Return one record by id, or a filtered/sorted list of matching records.
 
-    `?include_archived=true`/`?include_unpublished=true` (see craftainer_crud.controllers.
-    crud_query) are passed through unconditionally -- a CRUDInterface backed by a
-    model with no Archivable/Schedulable mixin ignores them (see
+    `?include_archived=true`/`?only_archived=true`/`?include_unpublished=true` (see
+    craftainer_crud.controllers.crud_query) are passed through unconditionally -- a
+    CRUDInterface backed by a model with no Archivable/Schedulable mixin ignores them (see
     craftainer_crud.repositories.sqlalchemy/craftainer_crud.repositories.memory).
     """
     include_archived = parse_include_archived(request.query_params)
     include_unpublished = parse_include_unpublished(request.query_params)
+    only_archived = parse_only_archived(request.query_params)
     if id is not None:
+        # Only a list narrows by it; a single-record get would return a live row.
+        reject_only_archived(request.query_params)
         reject_filters_with_id(request.query_params)
         record = await crud.get(
             id, include_archived=include_archived, include_unpublished=include_unpublished
@@ -111,6 +116,7 @@ async def resolve_list_or_get(
         filters=filters,
         sort=sort,
         include_archived=include_archived,
+        only_archived=only_archived,
         include_unpublished=include_unpublished,
     )
 
@@ -125,6 +131,7 @@ async def resolve_update(
     not_found: str,
 ) -> Any:  # BaseModel | BulkUpdateResult, see module docstring
     """Update one record by id, or bulk-update every record matching the query filters."""
+    reject_only_archived(request.query_params)
     if id is not None:
         reject_filters_with_id(request.query_params)
         try:
@@ -163,6 +170,7 @@ async def resolve_delete(
     not_found: str,
 ) -> BulkDeleteResult | None:
     """Delete one record by id, or bulk-delete every record matching the query filters."""
+    reject_only_archived(request.query_params)
     if id is not None:
         reject_filters_with_id(request.query_params)
         try:
@@ -204,6 +212,7 @@ async def resolve_restore(
     not_found: str,
 ) -> Any:  # BaseModel | BulkUpdateResult, see module docstring
     """Restore one archived record by id, or bulk-restore every record matching the filters."""
+    reject_only_archived(request.query_params)
     if id is not None:
         reject_filters_with_id(request.query_params)
         restored = await crud.restore(id)  # type: ignore[attr-defined]

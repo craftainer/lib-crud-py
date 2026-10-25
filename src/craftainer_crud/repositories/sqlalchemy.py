@@ -180,18 +180,21 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         return clauses
 
     def _visibility_clauses(
-        self, *, include_archived: bool, include_unpublished: bool
+        self, *, include_archived: bool, include_unpublished: bool, only_archived: bool = False
     ) -> list[ColumnElement[bool]]:
         """Extra WHERE clauses excluding archived/not-yet-or-no-longer-published rows.
+
+        `only_archived` inverts the archived clause (keep just the archived rows) and
+        wins over `include_archived`; like it, a no-op for a model without `archived_at`.
 
         Built with `datetime.now(UTC)` at query time (see craftainer_crud.models.mixins.
         Schedulable), never a stored boolean, so no background process needs to
         touch the row for it to stop/start being visible.
         """
         clauses: list[ColumnElement[bool]] = []
-        if not include_archived and hasattr(self._model, "archived_at"):
+        if (only_archived or not include_archived) and hasattr(self._model, "archived_at"):
             archived_at = self._model.archived_at  # type: ignore[attr-defined]
-            clauses.append(archived_at.is_(None))
+            clauses.append(archived_at.is_not(None) if only_archived else archived_at.is_(None))
         if not include_unpublished and hasattr(self._model, "publish_at"):
             now = _now()
             publish_at = self._model.publish_at  # type: ignore[attr-defined]
@@ -253,6 +256,7 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         filters: Sequence[FilterClause] = (),
         sort: Sequence[SortClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> Sequence[ModelT]:
         """Return up to `limit` matching records, skipping the first `skip`."""
@@ -262,7 +266,9 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
             self._matching(filters)
             .where(
                 *self._visibility_clauses(
-                    include_archived=include_archived, include_unpublished=include_unpublished
+                    include_archived=include_archived,
+                    include_unpublished=include_unpublished,
+                    only_archived=only_archived,
                 )
             )
             .order_by(*order)
@@ -277,6 +283,7 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         *,
         filters: Sequence[FilterClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> int:
         """Return how many records match the given filters.
@@ -291,7 +298,9 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
             .where(
                 *self._where_clauses(filters),
                 *self._visibility_clauses(
-                    include_archived=include_archived, include_unpublished=include_unpublished
+                    include_archived=include_archived,
+                    include_unpublished=include_unpublished,
+                    only_archived=only_archived,
                 ),
             )
         )

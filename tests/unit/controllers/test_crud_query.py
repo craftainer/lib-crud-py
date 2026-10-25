@@ -20,8 +20,10 @@ from craftainer_crud.controllers.crud_query import (
     parse_filters,
     parse_include_archived,
     parse_include_unpublished,
+    parse_only_archived,
     parse_sort,
     reject_filters_with_id,
+    reject_only_archived,
 )
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 
@@ -253,6 +255,62 @@ def test_parse_include_unpublished_true_and_false() -> None:
     """?include_unpublished=true/false parses to the corresponding bool; absent is False."""
     assert parse_include_unpublished(QueryParams("include_unpublished=true")) is True
     assert parse_include_unpublished(QueryParams("")) is False
+
+
+def test_parse_only_archived_true_false_and_absent() -> None:
+    """?only_archived=true/false parses to the bool; absent is False."""
+    assert parse_only_archived(QueryParams("only_archived=true")) is True
+    assert parse_only_archived(QueryParams("only_archived=1")) is True
+    assert parse_only_archived(QueryParams("only_archived=false")) is False
+    assert parse_only_archived(QueryParams("")) is False
+    assert parse_only_archived(QueryParams("only_archived=false&include_archived=false")) is False
+
+
+def test_parse_only_archived_allows_include_archived_true_or_absent() -> None:
+    """only_archived=true implies include_archived, so include_archived=true is consistent."""
+    assert parse_only_archived(QueryParams("only_archived=true&include_archived=true")) is True
+    assert parse_only_archived(QueryParams("only_archived=true&include_archived=1")) is True
+
+
+def test_parse_only_archived_with_explicit_include_archived_false_is_rejected() -> None:
+    """only_archived=true next to an explicit include_archived=false/0 is contradictory."""
+    for query in (
+        "only_archived=true&include_archived=false",
+        "include_archived=0&only_archived=1",
+    ):
+        with pytest.raises(RequestValidationError) as excinfo:
+            parse_only_archived(QueryParams(query))
+        assert excinfo.value.errors()[0]["loc"] == ("query", "only_archived")
+
+
+def test_parse_only_archived_invalid_value_rejected() -> None:
+    """?only_archived=<not true/false/1/0> is rejected like include_archived."""
+    with pytest.raises(RequestValidationError):
+        parse_only_archived(QueryParams("only_archived=maybe"))
+
+
+def test_parse_include_archived_also_validates_only_archived() -> None:
+    """Every route reading include_archived rejects the contradictory pair and bad values."""
+    with pytest.raises(RequestValidationError):
+        parse_include_archived(QueryParams("only_archived=true&include_archived=false"))
+    with pytest.raises(RequestValidationError):
+        parse_include_archived(QueryParams("only_archived=maybe"))
+    assert parse_include_archived(QueryParams("only_archived=true")) is False
+
+
+def test_reject_only_archived() -> None:
+    """Routes that cannot narrow to archived rows refuse only_archived=true, allow false."""
+    reject_only_archived(QueryParams(""))
+    reject_only_archived(QueryParams("only_archived=false"))
+    with pytest.raises(RequestValidationError) as excinfo:
+        reject_only_archived(QueryParams("only_archived=true"))
+    assert excinfo.value.errors()[0]["loc"] == ("query", "only_archived")
+
+
+def test_parse_only_archived_is_reserved_not_a_filter() -> None:
+    """only_archived never parses as a filter, and may accompany ?id=."""
+    assert parse_filters(_Widget, QueryParams("only_archived=true")) == []
+    reject_filters_with_id(QueryParams("id=5&only_archived=true"))
 
 
 def test_parse_include_archived_invalid_value_rejected() -> None:

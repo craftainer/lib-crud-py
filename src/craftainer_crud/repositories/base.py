@@ -27,7 +27,10 @@ class Repository[ModelT](Protocol):
 
         For a model carrying craftainer_crud.models.mixins.Archivable/Schedulable, an archived
         or not-yet-/no-longer-published record is treated as not found unless the
-        matching `include_*` flag is set.
+        matching `include_*` flag is set. `list`/`count` also accept `only_archived`
+        (default `False`): when `True` they keep just the archived rows, whatever
+        `include_archived` says; a model without `archived_at` ignores it, like
+        `include_archived`. `get` has no such flag.
         """
         ...
 
@@ -39,6 +42,7 @@ class Repository[ModelT](Protocol):
         filters: Sequence[FilterClause] = (),
         sort: Sequence[SortClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> Sequence[ModelT]:
         """Return up to `limit` matching records, skipping the first `skip`.
@@ -52,6 +56,7 @@ class Repository[ModelT](Protocol):
         *,
         filters: Sequence[FilterClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> int:
         """Return how many records match the given filters.

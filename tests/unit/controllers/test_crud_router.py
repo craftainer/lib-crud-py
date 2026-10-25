@@ -114,6 +114,7 @@ class _FakeGadgetRepository:
         filters: Sequence[FilterClause] = (),
         sort: Sequence[SortClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> list[_GadgetRecord]:
         """Return up to `limit` matching records, skipping the first `skip`."""
@@ -129,6 +130,7 @@ class _FakeGadgetRepository:
         *,
         filters: Sequence[FilterClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> int:
         """Return how many records match the given filters."""

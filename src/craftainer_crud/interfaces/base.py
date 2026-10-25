@@ -658,6 +658,7 @@ class CRUDLike[SchemaT: BaseModel](Protocol):
         filters: Sequence[FilterClause] = (),
         sort: Sequence[SortClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> list[SchemaT]:
         """Return up to `limit` matching records as views, skipping the first `skip`."""
@@ -668,6 +669,7 @@ class CRUDLike[SchemaT: BaseModel](Protocol):
         *,
         filters: Sequence[FilterClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> int:
         """Return how many records match the given filters."""
@@ -830,6 +832,7 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
         filters: Sequence[FilterClause] = (),
         sort: Sequence[SortClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> list[SchemaT]:
         """Return up to `limit` matching records as views, skipping the first `skip`.
@@ -842,6 +845,7 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
             filters=self._read_scoped(filters),
             sort=sort,
             include_archived=include_archived,
+            only_archived=only_archived,
             include_unpublished=include_unpublished,
         )
         return [self._schema.model_validate(instance) for instance in instances]
@@ -851,6 +855,7 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
         *,
         filters: Sequence[FilterClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> int:
         """Return how many records match the given filters.
@@ -861,6 +866,7 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
         return await self._repository.count(
             filters=self._read_scoped(filters),
             include_archived=include_archived,
+            only_archived=only_archived,
             include_unpublished=include_unpublished,
         )
 

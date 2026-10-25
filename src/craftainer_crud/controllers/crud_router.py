@@ -47,6 +47,7 @@ from craftainer_crud.controllers.crud_query import (
     parse_include_archived,
     parse_include_unpublished,
     reject_filters_with_id,
+    reject_only_archived,
 )
 from craftainer_crud.interfaces.base import EventIterator
 from craftainer_crud.interfaces.cache import StatsCache
@@ -310,6 +311,7 @@ async def _resolve_stats(crud: Any, schema: type[BaseModel], request: Request) -
     Shared by build_json_router's and build_xml_router's own `/stats` routes --
     only the rendering (a plain view vs. hand-assembled XML) differs between them.
     """
+    reject_only_archived(request.query_params)
     bucket = crud_stats.parse_bucket(request.query_params.get("bucket"))
     include_archived = parse_include_archived(request.query_params)
     include_unpublished = parse_include_unpublished(request.query_params)
@@ -429,6 +431,7 @@ def _require_cache_resource(stats_cache: StatsCache | None, resource: str | None
 
 def _stats_cache_params(request: Request) -> dict[str, Any]:
     """Normalize `/stats`'s query params for its cache key; raises 422 exactly as the route does."""
+    reject_only_archived(request.query_params)
     bucket = crud_stats.parse_bucket(request.query_params.get("bucket"))
     return {
         "bucket": None if bucket is None else bucket.value,

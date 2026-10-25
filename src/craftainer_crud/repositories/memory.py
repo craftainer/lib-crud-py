@@ -201,10 +201,22 @@ def _sort_key(instance: object, clause: SortClause) -> Any:  # noqa: ANN401
     return _known_field(instance, clause.field)
 
 
-def _is_visible(instance: object, *, include_archived: bool, include_unpublished: bool) -> bool:
-    """Whether `instance` passes the default Archivable/Schedulable exclusion rules."""
-    if not include_archived and getattr(instance, "archived_at", None) is not None:
-        return False
+def _is_visible(
+    instance: object,
+    *,
+    include_archived: bool,
+    include_unpublished: bool,
+    only_archived: bool = False,
+) -> bool:
+    """Whether `instance` passes the default Archivable/Schedulable exclusion rules.
+
+    `only_archived` keeps just the archived rows and wins over `include_archived`; a
+    model without `archived_at` is unaffected by either, as in the SQLAlchemy repository.
+    """
+    if hasattr(instance, "archived_at"):
+        archived = instance.archived_at is not None
+        if archived != only_archived and (only_archived or not include_archived):
+            return False
     if not include_unpublished:
         publish_at = getattr(instance, "publish_at", None)
         unpublish_at = getattr(instance, "unpublish_at", None)
@@ -275,6 +287,7 @@ class InMemoryRepository[ModelT: IdentifiedBase]:
         filters: Sequence[FilterClause] = (),
         sort: Sequence[SortClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> Sequence[ModelT]:
         """Return up to `limit` matching records, skipping the first `skip`."""
@@ -282,7 +295,10 @@ class InMemoryRepository[ModelT: IdentifiedBase]:
             instance
             for instance in self._matching(filters)
             if _is_visible(
-                instance, include_archived=include_archived, include_unpublished=include_unpublished
+                instance,
+                include_archived=include_archived,
+                include_unpublished=include_unpublished,
+                only_archived=only_archived,
             )
         ]
         ordered = self._sorted(matching, sort) if sort else matching
@@ -293,6 +309,7 @@ class InMemoryRepository[ModelT: IdentifiedBase]:
         *,
         filters: Sequence[FilterClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> int:
         """Return how many records match the given filters.
@@ -308,6 +325,7 @@ class InMemoryRepository[ModelT: IdentifiedBase]:
                     instance,
                     include_archived=include_archived,
                     include_unpublished=include_unpublished,
+                    only_archived=only_archived,
                 )
             ]
         )

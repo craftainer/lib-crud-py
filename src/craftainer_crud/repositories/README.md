@@ -56,7 +56,9 @@ present:
   already-archived row as not found — `False`/`None` — same as one that
   never existed); `restore`/`restore_many` clear it back to `None`;
   `list`/`get`/`count` exclude a row with `archived_at` set unless
-  `include_archived=True`. `update_many`/`delete_many` apply this same
+  `include_archived=True`; `list`/`count` also take `only_archived=True`
+  (default `False`), which keeps *just* the archived rows and wins over
+  `include_archived` (`get` has no such flag). `update_many`/`delete_many` apply this same
   archived-exclusion by default too — a bulk action's filters shouldn't
   silently reach a record a normal read can't see.
 - `Schedulable`: `list`/`get`/`count` exclude a row outside its

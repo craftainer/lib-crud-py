@@ -274,6 +274,49 @@ async def test_restore_clears_archived_at(repository: InMemoryRepository[Hero]) 
     assert await repository.get(batman.id) is not None
 
 
+async def test_only_archived_returns_just_archived_rows(
+    repository: InMemoryRepository[Hero],
+) -> None:
+    """list()/count() with only_archived keep archived rows, combined with filters/sort/paging."""
+    heroes = await repository.list()
+    batman = next(hero for hero in heroes if hero.name == "Batman")
+    batgirl = next(hero for hero in heroes if hero.name == "Batgirl")
+    assert await repository.delete(batman.id) is True
+    assert await repository.delete(batgirl.id) is True
+
+    archived = await repository.list(only_archived=True)
+    assert {hero.name for hero in archived} == {"Batman", "Batgirl"}
+    assert await repository.count(only_archived=True) == 2
+    # Default is unchanged; include_archived still returns live and archived together.
+    assert [hero.name for hero in await repository.list()] == ["Superman"]
+    assert len(await repository.list(include_archived=True)) == 3
+    # only_archived wins over include_archived=False, which the repository cannot tell
+    # from the default (the HTTP layer rejects the explicit contradiction).
+    assert await repository.count(only_archived=True, include_archived=False) == 2
+
+    name_filter = [FilterClause("name", FilterOp.EQ, "Batgirl")]
+    filtered = await repository.list(only_archived=True, filters=name_filter)
+    assert [hero.name for hero in filtered] == ["Batgirl"]
+    assert await repository.count(only_archived=True, filters=name_filter) == 1
+    assert (
+        await repository.count(
+            only_archived=True, filters=[FilterClause("name", FilterOp.EQ, "Superman")]
+        )
+        == 0
+    )
+
+    by_name = await repository.list(only_archived=True, sort=[SortClause("name")], limit=1, skip=1)
+    assert [hero.name for hero in by_name] == ["Batman"]
+
+
+async def test_only_archived_is_ignored_without_archived_at() -> None:
+    """A model with no archived_at ignores only_archived, exactly as include_archived."""
+    repo = InMemoryRepository(_PlainRecord)
+    await repo.create({"value": 1})
+    assert len(await repo.list(only_archived=True)) == 1
+    assert await repo.count(only_archived=True) == 1
+
+
 # --- stats(): numeric/categorical/time-series/lifecycle aggregates ------------
 
 

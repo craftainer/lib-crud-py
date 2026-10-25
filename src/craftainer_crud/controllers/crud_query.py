@@ -48,7 +48,9 @@ from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortC
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000
 
-_RESERVED_PARAMS = frozenset({"skip", "limit", "sort", "include_archived", "include_unpublished"})
+_RESERVED_PARAMS = frozenset(
+    {"skip", "limit", "sort", "include_archived", "only_archived", "include_unpublished"}
+)
 # Reserved plus `id`: the keys that are never a filter, whichever route reads them.
 _NON_FILTER_PARAMS = _RESERVED_PARAMS | {"id"}
 
@@ -351,11 +353,16 @@ def parse_sort(schema: type[BaseModel], params: QueryParams) -> list[SortClause]
     return clauses
 
 
+def _query_error(key: str, msg: str) -> RequestValidationError:
+    """Build the 422 `RequestValidationError` for a bad `?<key>=` query value."""
+    return RequestValidationError([{"loc": ("query", key), "msg": msg, "type": "value_error"}])
+
+
 def _parse_bool_flag(params: QueryParams, key: str) -> bool:
     """Parse a `?<key>=true|false` boolean query flag, defaulting to False when absent.
 
     Shares `_cast_bool`'s "true"/"1"/"false"/"0" vocabulary; an unrecognized value
-    is a 400 (RequestValidationError), matching every other filter value's own
+    is a 422 (RequestValidationError), matching every other filter value's own
     invalid-value handling in `parse_filters`.
     """
     raw = params.get(key)
@@ -364,17 +371,49 @@ def _parse_bool_flag(params: QueryParams, key: str) -> bool:
     try:
         return _cast_bool(raw)
     except ValueError as exc:
-        errors = [{"loc": ("query", key), "msg": "invalid filter value", "type": "value_error"}]
-        raise RequestValidationError(errors) from exc
+        raise _query_error(key, "invalid filter value") from exc
+
+
+def parse_only_archived(params: QueryParams) -> bool:
+    """Parse the `?only_archived=true` flag Archivable list routes accept.
+
+    `true` narrows a list to the rows with `archived_at` set (the inverse of the default
+    exclusion; `include_archived=true` returns live and archived rows together). It
+    implies `include_archived`, so `only_archived=true` next to an explicit
+    `include_archived=false` is contradictory and a 422 (RequestValidationError), `loc`
+    `["query", "only_archived"]`; next to `include_archived=true` (or none) it is fine.
+    `only_archived=false` is the default and changes nothing.
+    """
+    only_archived = _parse_bool_flag(params, "only_archived")
+    if (
+        only_archived
+        and "include_archived" in params
+        and not _parse_bool_flag(params, "include_archived")
+    ):
+        raise _query_error("only_archived", "cannot be combined with include_archived=false")
+    return only_archived
+
+
+def reject_only_archived(params: QueryParams) -> None:
+    """Raise a 422 when `?only_archived=true` reaches a route that cannot honour it.
+
+    Only a list read narrows by `only_archived`. A write or `/stats` request that carried
+    it would otherwise silently act on live rows when the caller meant the trash.
+    """
+    if parse_only_archived(params):
+        raise _query_error("only_archived", "applies to list reads only")
 
 
 def parse_include_archived(params: QueryParams) -> bool:
     """Parse the `?include_archived=true` flag Archivable list/get routes accept.
 
+    Also validates `only_archived` (see `parse_only_archived`), so every route that reads
+    this flag rejects the contradictory pair and a malformed `only_archived` alike.
     See craftainer_crud.repositories.sqlalchemy/craftainer_crud.repositories.memory's
     default-exclusion
     logic for what this flag overrides.
     """
+    parse_only_archived(params)
     return _parse_bool_flag(params, "include_archived")
 
 
@@ -399,6 +438,8 @@ __all__: Sequence[str] = (
     "parse_filters",
     "parse_include_archived",
     "parse_include_unpublished",
+    "parse_only_archived",
     "parse_sort",
     "reject_filters_with_id",
+    "reject_only_archived",
 )
