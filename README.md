@@ -114,6 +114,27 @@ unset; set the same value on every instance (and keep it across restarts) for
 resume to work across workers and restarts. A forged or unknown id is not an error:
 the stream starts fresh under a new id.
 
+### Transient and durable subscribers
+
+`MQTTEventSource.subscribe(subscriber_id, *, durable=True)` connects with a persistent
+session by default (`clean_session=False`): the broker queues QoS 1 events while the
+subscriber is away and replays them when the same id returns. That is what SSE clients
+want, and it is all `GET <prefix>/events` ever does; the router does not expose
+`durable`.
+
+A long-lived in-process consumer that always starts from scratch (a cache invalidator)
+should call `subscribe(None, durable=False)` (a fresh id, never one a durable subscriber uses, since
+the clean-session connect would discard that session). It connects with a clean session, so the
+broker drops the session when the connection ends, whether it closes cleanly or crashes,
+and a restart leaves nothing behind. Nothing is replayed to a transient subscriber.
+`InMemoryEventSink.subscribe` accepts the keyword and ignores it.
+
+Production brokers should also set a finite persistent-session expiry, sized to the
+longest SSE replay window clients need (for example Mosquitto's
+`persistent_client_expiration 1h`). Mosquitto's default never expires persistent
+sessions, so abandoned durable SSE sessions would pile up without bound; EMQX defaults
+to 2h. The setting is a backstop, not a substitute for transient subscribers.
+
 ## Model changes need an app-side migration
 
 The package ships SQLAlchemy models (`Revision`, the lifecycle mixins) but no

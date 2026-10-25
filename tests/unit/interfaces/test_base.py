@@ -736,6 +736,16 @@ async def test_in_memory_event_sink_reuses_a_server_minted_subscriber_id() -> No
     assert subscriber_id == minted
 
 
+async def test_in_memory_event_sink_accepts_durable_false() -> None:
+    """durable=False is accepted (and changes nothing) so callers can pass it to any source."""
+    sink = InMemoryEventSink()
+    _, events = await sink.subscribe(None, durable=False)
+
+    await sink.publish(resource="hero", record_id=2, action="create", snapshot={"id": 2})
+
+    assert (await events.__anext__())["record_id"] == 2
+
+
 async def test_in_memory_event_sink_fans_out_to_every_subscriber() -> None:
     """A single publish() reaches every currently-subscribed queue, not just the first."""
     sink = InMemoryEventSink()
