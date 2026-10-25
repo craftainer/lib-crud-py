@@ -64,6 +64,11 @@ this package receives them:
   `async_sessionmaker` (`get_session_factory()` raises if none was
   supplied), and providers/routes read `get_config()` at call time. No
   module here creates an engine or reads environment settings.
+- Keep-alive settings are validated when the config is built (`ValueError`
+  for a bad value, `TypeError` for a wrong type, so a mistake fails at
+  startup): `sse_keepalive_seconds` must be finite and greater than 0 (it is
+  also published in the manifest), and `MQTTConfig.keepalive_seconds` must be
+  0 to 65535 (MQTT 3.1.1 section 3.1.2.10; 0 disables the MQTT keep-alive).
 - Rate limiting: the router factories (`build_resource_router`,
   `build_json_router`, `build_xml_router`) take an optional
   `bulk_rate_limit` route decorator (e.g. `limiter.limit("20/minute")`)

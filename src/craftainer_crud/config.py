@@ -8,11 +8,14 @@ raises, so a missing wiring step fails loudly instead of silently using the wron
 database.
 """
 
+import math
 from dataclasses import dataclass, field
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 MIN_SUBSCRIBER_SECRET_LEN = 32
+MAX_MQTT_KEEPALIVE_SECONDS = 65535
+"""MQTT 3.1.1 section 3.1.2.10: the keep-alive is a 16-bit unsigned count of seconds."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +25,7 @@ class MQTTConfig:
     host: str = "localhost"
     port: int = 1883
     keepalive_seconds: int = 60
+    """MQTT keep-alive in seconds, 0 to 65535 (MQTT 3.1.1 section 3.1.2.10; 0 disables it)."""
     username: str | None = None
     password: str | None = None
     use_tls: bool = False
@@ -29,6 +33,16 @@ class MQTTConfig:
     """Seconds the broker keeps an abandoned durable event-stream session (MQTT 5.0 Session
     Expiry Interval). None (the default) leaves expiry to the broker. See
     `MQTTEventSource.session_ttl`."""
+
+    def __post_init__(self) -> None:
+        """Refuse a keep-alive outside the 16-bit range MQTT allows."""
+        keepalive: object = self.keepalive_seconds
+        if not isinstance(keepalive, int) or isinstance(keepalive, bool):
+            msg = "keepalive_seconds must be an int"
+            raise TypeError(msg)
+        if not 0 <= keepalive <= MAX_MQTT_KEEPALIVE_SECONDS:
+            msg = f"keepalive_seconds must be between 0 and {MAX_MQTT_KEEPALIVE_SECONDS}"
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,7 +54,8 @@ class CrudConfig:
     bulk_action_max_matched: int = 1000
     """Largest number of records one bulk update/delete/restore may match."""
     sse_keepalive_seconds: float = 15.0
-    """Idle seconds before an SSE stream emits a keep-alive comment."""
+    """Idle seconds before an SSE stream emits a keep-alive comment. Must be finite and
+    greater than 0: 0 would spin the stream and is advertised to clients in the manifest."""
     mqtt: MQTTConfig = field(default_factory=MQTTConfig)
     subscriber_secret: bytes | None = None
     """Key that signs event-stream subscriber ids, at least 32 bytes. None (the default)
@@ -49,7 +64,18 @@ class CrudConfig:
     like any signing key: whoever holds it can mint ids."""
 
     def __post_init__(self) -> None:
-        """Refuse a subscriber secret that is not bytes or too short to be a signing key."""
+        """Refuse a bad SSE keep-alive, or a subscriber secret that is not bytes or too short."""
+        sse: object = self.sse_keepalive_seconds
+        if not isinstance(sse, int | float) or isinstance(sse, bool):
+            msg = "sse_keepalive_seconds must be a number"
+            raise TypeError(msg)
+        try:
+            as_float = float(sse)
+        except OverflowError:  # an int too large for a float is not finite
+            as_float = math.inf
+        if not math.isfinite(as_float) or as_float <= 0:
+            msg = "sse_keepalive_seconds must be finite and greater than 0"
+            raise ValueError(msg)
         secret: object = self.subscriber_secret
         if secret is None:
             return
