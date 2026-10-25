@@ -135,6 +135,18 @@ longest SSE replay window clients need (for example Mosquitto's
 sessions, so abandoned durable SSE sessions would pile up without bound; EMQX defaults
 to 2h. The setting is a backstop, not a substitute for transient subscribers.
 
+### Bounding abandoned durable sessions (`session_ttl`)
+
+`MQTTEventSource(..., session_ttl=3600)` (or `MQTTConfig(session_ttl_seconds=3600)`
+through `CrudConfig`) makes durable subscribers connect over MQTT 5.0 with Clean Start 0
+and a Session Expiry Interval of that many seconds, so a browser SSE client that never
+returns has its session and queued events dropped by the broker after the TTL. Within the
+TTL a returning id is replayed as before. The value is 1 to 2**32-1 seconds; the default
+`None` keeps the 3.1.1 behaviour above. Transient subscribers and the publisher stay on
+3.1.1, and v3 and v5 clients interoperate on the same topic. The broker must speak MQTT
+5.0 and may cap the value (Mosquitto `max_session_expiry_interval`). See
+`docs/adrs/0005-durable-session-ttl.md`.
+
 ## Model changes need an app-side migration
 
 The package ships SQLAlchemy models (`Revision`, the lifecycle mixins) but no

@@ -24,10 +24,10 @@ import asyncio
 import json
 import logging
 import ssl
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from pydantic import BaseModel
 
@@ -182,6 +182,9 @@ def _mqtt_connection_kwargs(
     return kwargs
 
 
+# Largest Session Expiry Interval MQTT 5.0 can carry (a four-byte unsigned integer).
+_MAX_SESSION_TTL = 2**32 - 1
+
 # Strong references for MQTTEventSource._events's detached disconnect tasks -- asyncio
 # only holds a *weak* reference to a task once nothing else does, so a fire-and-forget
 # `asyncio.ensure_future(...)` with no reference kept anywhere is eligible for garbage
@@ -254,7 +257,17 @@ class MQTTEventSource:
 
     `subscribe(..., durable=False)` connects with `clean_session=True` instead (MQTT 3.1.1
     section 3.1.2.4): the broker discards the session when the connection ends, cleanly or
-    not, so a restarting long-lived consumer leaves nothing behind.
+    not, so a restarting long-lived consumer leaves nothing behind. This stays on MQTT
+    3.1.1 whatever `session_ttl` is.
+
+    `session_ttl` (seconds, default None) bounds an *abandoned* durable session: a durable
+    subscriber then connects over MQTT 5.0 with Clean Start 0 and a Session Expiry Interval
+    of `session_ttl` (MQTT 5.0 sections 3.1.2.4 and 3.1.2.11.2), so the broker deletes the
+    session, with its queued events, that long after the connection ends. A client that
+    returns within the TTL resumes and is replayed exactly as before (QoS 1, same
+    topic); one that returns later gets a fresh session. None keeps the 0.4.0 behaviour
+    (MQTT 3.1.1, expiry left to the broker). The publisher (`MQTTEventSink`) stays on
+    3.1.1, which the broker bridges to v5 subscribers.
     """
 
     hostname: str
@@ -264,6 +277,36 @@ class MQTTEventSource:
     username: str | None = None
     password: str | None = None
     use_tls: bool = False
+    session_ttl: int | None = None
+
+    def __post_init__(self) -> None:
+        """Refuse a TTL the Session Expiry Interval (a four-byte unsigned int) cannot carry."""
+        ttl: object = self.session_ttl
+        if ttl is not None and (
+            not isinstance(ttl, int) or isinstance(ttl, bool) or not 1 <= ttl <= _MAX_SESSION_TTL
+        ):
+            msg = f"session_ttl must be an int between 1 and {_MAX_SESSION_TTL} seconds, or None"
+            raise ValueError(msg)
+
+    def _session_kwargs(self, *, durable: bool) -> dict[str, Any]:
+        """The `aiomqtt.Client` kwargs that select the session type (see the class docstring)."""
+        if not durable or self.session_ttl is None:
+            return {"clean_session": not durable}
+        import aiomqtt  # noqa: PLC0415 -- optional `[mqtt]` extra, only needed here
+        from paho.mqtt.packettypes import PacketTypes as PahoPacketTypes  # noqa: PLC0415
+        from paho.mqtt.properties import Properties  # noqa: PLC0415
+
+        # paho's Properties.__init__ is unannotated, which mypy --strict refuses to call.
+        new_properties = cast("Callable[[int], Properties]", Properties)
+        properties = new_properties(PahoPacketTypes.CONNECT)
+        properties.SessionExpiryInterval = self.session_ttl
+        # paho's default clean_start (FIRST_ONLY) would wipe the session on the very first
+        # connect, so Clean Start 0 has to be explicit; v5 forbids `clean_session`.
+        return {
+            "protocol": aiomqtt.ProtocolVersion.V5,
+            "clean_start": False,
+            "properties": properties,
+        }
 
     async def subscribe(
         self, subscriber_id: str | None, *, durable: bool = True
@@ -293,12 +336,13 @@ class MQTTEventSource:
         resolved = resolve_subscriber_id(self.resource, subscriber_id)
         import aiomqtt  # noqa: PLC0415 -- optional `[mqtt]` extra, only needed here
 
+        session_kwargs = self._session_kwargs(durable=durable)
         client = aiomqtt.Client(
             hostname=self.hostname,
             port=self.port,
             identifier=f"crud-events-{self.resource}-{resolved}",
-            clean_session=not durable,
             keepalive=self.keepalive,
+            **session_kwargs,
             **_mqtt_connection_kwargs(
                 username=self.username, password=self.password, use_tls=self.use_tls
             ),

@@ -5,7 +5,7 @@ import json
 import sys
 import types
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -59,6 +59,7 @@ def _fake_aiomqtt(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeClient.instances.clear()
     module = types.ModuleType("aiomqtt")
     module.Client = _FakeClient  # type: ignore[attr-defined]
+    module.ProtocolVersion = types.SimpleNamespace(V5="v5")  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "aiomqtt", module)
 
 
@@ -122,6 +123,54 @@ async def test_source_is_durable_by_default() -> None:
     assert _FakeClient.instances[0].kwargs["clean_session"] is False
     await events.aclose()  # type: ignore[attr-defined]
     await asyncio.gather(*list(_background_tasks))
+
+
+async def test_source_without_session_ttl_stays_on_mqtt_311() -> None:
+    """session_ttl=None (the default) passes no v5 arguments, as in 0.4.0."""
+    source = MQTTEventSource(hostname="broker", port=1883, resource="hero", keepalive=60)
+    _, events = await source.subscribe(None)
+    kwargs = _FakeClient.instances[0].kwargs
+    assert not {"protocol", "clean_start", "properties"} & kwargs.keys()
+    await events.aclose()  # type: ignore[attr-defined]
+    await asyncio.gather(*list(_background_tasks))
+
+
+async def test_durable_source_with_session_ttl_connects_over_v5_with_an_expiry() -> None:
+    """A TTL makes the durable session MQTT 5.0, Clean Start 0, Session Expiry Interval=ttl."""
+    source = MQTTEventSource(
+        hostname="broker", port=1883, resource="hero", keepalive=60, session_ttl=900
+    )
+    _, events = await source.subscribe(None)
+    (client,) = _FakeClient.instances
+    assert client.kwargs["protocol"] == "v5"
+    assert client.kwargs["clean_start"] is False
+    assert client.kwargs["properties"].SessionExpiryInterval == 900
+    assert "clean_session" not in client.kwargs
+    assert client.subscribed == [("crud-events/hero", 1)]
+    await events.aclose()  # type: ignore[attr-defined]
+    await asyncio.gather(*list(_background_tasks))
+
+
+async def test_transient_source_ignores_session_ttl() -> None:
+    """durable=False stays a 3.1.1 clean session even when session_ttl is set."""
+    source = MQTTEventSource(
+        hostname="broker", port=1883, resource="hero", keepalive=60, session_ttl=900
+    )
+    _, events = await source.subscribe(None, durable=False)
+    kwargs = _FakeClient.instances[0].kwargs
+    assert kwargs["clean_session"] is True
+    assert not {"protocol", "clean_start", "properties"} & kwargs.keys()
+    await events.aclose()  # type: ignore[attr-defined]
+    await asyncio.gather(*list(_background_tasks))
+
+
+@pytest.mark.parametrize("ttl", [0, -1, 2**32, True, 3600.0])
+def test_session_ttl_outside_the_expiry_interval_range_is_refused(ttl: object) -> None:
+    """The interval is a four-byte unsigned int, and 0 would mean 'expire on disconnect'."""
+    with pytest.raises(ValueError, match="session_ttl"):
+        MQTTEventSource(
+            hostname="b", port=1, resource="hero", keepalive=1, session_ttl=cast("int", ttl)
+        )
 
 
 async def test_source_issues_a_subscriber_id_when_none_is_given() -> None:

@@ -96,6 +96,7 @@ def build_event_source_provider(resource: str) -> Callable[[], EventSource]:
             return _mock_event_sink_for(resource)
         return MQTTEventSource(
             **_mqtt_kwargs(config.mqtt, resource),
+            session_ttl=config.mqtt.session_ttl_seconds,
         )
 
     return provider
