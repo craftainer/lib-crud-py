@@ -25,6 +25,10 @@ class MQTTConfig:
     username: str | None = None
     password: str | None = None
     use_tls: bool = False
+    session_ttl_seconds: int | None = None
+    """Seconds the broker keeps an abandoned durable event-stream session (MQTT 5.0 Session
+    Expiry Interval). None (the default) leaves expiry to the broker. See
+    `MQTTEventSource.session_ttl`."""
 
 
 @dataclass(frozen=True, slots=True)

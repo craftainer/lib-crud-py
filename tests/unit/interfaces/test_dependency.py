@@ -104,3 +104,17 @@ def test_non_mock_mode_returns_mqtt_backed_sink_and_source(
     assert source == MQTTEventSource(
         hostname="mqtt-test-host", port=18830, resource="widget", keepalive=42
     )
+
+
+def test_session_ttl_seconds_reaches_the_mqtt_source_but_not_the_sink(
+    override_crud_config: CrudConfigOverride,
+) -> None:
+    """MQTTConfig.session_ttl_seconds configures the source's session_ttl only."""
+    override_crud_config(use_memory=False, mqtt={"session_ttl_seconds": 600})
+
+    source = build_event_source_provider("widget")()
+    sink = build_event_sink_provider("widget")()
+
+    assert isinstance(source, MQTTEventSource)
+    assert source.session_ttl == 600
+    assert isinstance(sink, MQTTEventSink)
