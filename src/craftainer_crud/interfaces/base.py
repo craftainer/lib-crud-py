@@ -123,7 +123,7 @@ class EventSource(Protocol):
     """
 
     async def subscribe(
-        self, subscriber_id: str | None
+        self, subscriber_id: str | None, *, durable: bool = True
     ) -> tuple[str, AsyncIterator[dict[str, Any]]]:
         """Resolve `subscriber_id` (issuing a new one if None, or if it is not an id this
         server minted for this resource -- see craftainer_crud.interfaces.subscriber_ids)
@@ -136,6 +136,13 @@ class EventSource(Protocol):
         briefly disconnected -- see docs/adrs/0015-mqtt-for-crud-events.md's "Delivery
         guarantee" section. A caller that discards its subscriber_id and passes None gets
         a fresh session with no replay, by design.
+
+        `durable=False` makes the subscription transient: the MQTT-backed adapter connects
+        with a clean session, so the broker drops the session (and anything it queued) when
+        the connection ends, whether it closes cleanly or crashes, and nothing is replayed
+        on reconnect. Use it for a long-lived in-process consumer that always resubscribes
+        from scratch (a cache invalidator) so each restart does not orphan a session.
+        `GET <prefix>/events` never exposes this: its clients rely on replay.
         """
         ...
 
@@ -244,6 +251,10 @@ class MQTTEventSource:
     for as long as the returned iterator is consumed (typically the lifetime of one
     SSE stream, see craftainer_crud.controllers.crud_router's `GET <prefix>/events`) via the
     `async with` inside `_events`, not by this method itself.
+
+    `subscribe(..., durable=False)` connects with `clean_session=True` instead (MQTT 3.1.1
+    section 3.1.2.4): the broker discards the session when the connection ends, cleanly or
+    not, so a restarting long-lived consumer leaves nothing behind.
     """
 
     hostname: str
@@ -255,10 +266,15 @@ class MQTTEventSource:
     use_tls: bool = False
 
     async def subscribe(
-        self, subscriber_id: str | None
+        self, subscriber_id: str | None, *, durable: bool = True
     ) -> tuple[str, AsyncIterator[dict[str, Any]]]:
-        """Resolve subscriber_id, connect and subscribe the persistent session, and
-        return it with an async iterator of event envelopes from that point on.
+        """Resolve subscriber_id, connect and subscribe (a persistent session, or a clean
+        one when `durable=False`), and return it with an async iterator of event
+        envelopes from that point on.
+
+        Pass `durable=False` with a fresh id (`None`), never one a durable subscriber is
+        using: the clean-session CONNECT takes over that client id and discards its
+        stored session and queued events.
 
         Connecting and subscribing *here*, before returning, rather than lazily on the
         iterator's first `__anext__()`, is what makes the delivery guarantee this class
@@ -281,7 +297,7 @@ class MQTTEventSource:
             hostname=self.hostname,
             port=self.port,
             identifier=f"crud-events-{self.resource}-{resolved}",
-            clean_session=False,
+            clean_session=not durable,
             keepalive=self.keepalive,
             **_mqtt_connection_kwargs(
                 username=self.username, password=self.password, use_tls=self.use_tls
@@ -380,9 +396,14 @@ class InMemoryEventSink:
             queue.put_nowait(envelope)
 
     async def subscribe(
-        self, subscriber_id: str | None
+        self, subscriber_id: str | None, *, durable: bool = True
     ) -> tuple[str, AsyncIterator[dict[str, Any]]]:
-        """Register a queue under `subscriber_id`, or a newly minted id if it is None or forged."""
+        """Register a queue under `subscriber_id`, or a newly minted id if it is None or forged.
+
+        `durable` is accepted for EventSource compatibility and has no effect: the queue is
+        dropped when the iterator ends either way.
+        """
+        del durable
         resolved = resolve_subscriber_id(self._resource or "", subscriber_id)
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._queues[resolved] = queue

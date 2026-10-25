@@ -100,6 +100,30 @@ async def test_source_resumes_a_persistent_session_and_streams_events() -> None:
     assert client.closed
 
 
+async def test_source_durable_false_connects_with_a_clean_session() -> None:
+    """durable=False asks the broker to drop the session when the connection ends."""
+    source = MQTTEventSource(hostname="broker", port=1883, resource="hero", keepalive=60)
+    minted = mint_subscriber_id("hero")
+    subscriber_id, events = await source.subscribe(minted, durable=False)
+    assert subscriber_id == minted
+    (client,) = _FakeClient.instances
+    assert client.kwargs["identifier"] == f"crud-events-hero-{minted}"
+    assert client.kwargs["clean_session"] is True
+    assert client.subscribed == [("crud-events/hero", 1)]
+    assert [event["action"] async for event in events] == ["create", "delete"]
+    await asyncio.gather(*list(_background_tasks))
+    assert client.closed
+
+
+async def test_source_is_durable_by_default() -> None:
+    """Omitting durable keeps the persistent session (clean_session=False)."""
+    source = MQTTEventSource(hostname="broker", port=1883, resource="hero", keepalive=60)
+    _, events = await source.subscribe(None)
+    assert _FakeClient.instances[0].kwargs["clean_session"] is False
+    await events.aclose()  # type: ignore[attr-defined]
+    await asyncio.gather(*list(_background_tasks))
+
+
 async def test_source_issues_a_subscriber_id_when_none_is_given() -> None:
     """A first-time subscriber gets a fresh id back to reconnect with."""
     source = MQTTEventSource(hostname="broker", port=1883, resource="hero", keepalive=60)
