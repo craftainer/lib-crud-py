@@ -147,6 +147,27 @@ TTL a returning id is replayed as before. The value is 1 to 2**32-1 seconds; the
 5.0 and may cap the value (Mosquitto `max_session_expiry_interval`). See
 `docs/adrs/0005-durable-session-ttl.md`.
 
+### Closing an event iterator
+
+`EventSource.subscribe()` connects (or registers a queue) before it returns, so the
+iterator it returns, an `EventIterator` (`craftainer_crud.interfaces.base`: an
+`AsyncIterator` with `aclose()`), owns a live resource from the start. `aclose()` it when
+done, started or not:
+
+```python
+import contextlib
+
+subscriber_id, events = await source.subscribe(None)
+async with contextlib.aclosing(events):
+    async for event in events:
+        ...
+```
+
+`aclose()` and garbage collection release it; nothing else does. A task cancelled between
+`subscribe()` returning and the `async with` is entered is covered only by garbage
+collection. See
+`docs/adrs/0006-release-unstarted-event-iterators.md`.
+
 ## Model changes need an app-side migration
 
 The package ships SQLAlchemy models (`Revision`, the lifecycle mixins) but no

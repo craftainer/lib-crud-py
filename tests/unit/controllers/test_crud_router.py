@@ -8,7 +8,7 @@ CompatCRUD generically.
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Any, cast
 
@@ -23,7 +23,12 @@ from craftainer_crud.controllers.crud_router import (
     build_web_router,
     build_xml_router,
 )
-from craftainer_crud.interfaces.base import CRUDInterface, EventSource, InMemoryEventSink
+from craftainer_crud.interfaces.base import (
+    CRUDInterface,
+    EventIterator,
+    EventSource,
+    InMemoryEventSink,
+)
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_crud.repositories.stats import (
     NumericFieldStats,
@@ -749,7 +754,7 @@ events_app.dependency_overrides[get_gadget_crud] = lambda: CRUDInterface(
 )
 
 
-async def _no_events_ever() -> AsyncIterator[dict[str, Any]]:
+async def _no_events_ever() -> AsyncGenerator[dict[str, Any]]:
     """An EventSource iterator that ends immediately, yielding nothing.
 
     Both TestClient (a portal that runs the whole request to completion before
@@ -781,7 +786,7 @@ class _FiniteEventSource:
 
     async def subscribe(
         self, subscriber_id: str | None
-    ) -> tuple[str, AsyncIterator[dict[str, Any]]]:
+    ) -> tuple[str, EventIterator[dict[str, Any]]]:
         """Resolve subscriber_id and return it with an iterator that yields nothing."""
         return subscriber_id or "stub-subscriber", _no_events_ever()
 
@@ -878,14 +883,14 @@ class _StubRequest:
         )
 
 
-async def _no_events_forthcoming() -> AsyncIterator[dict[str, Any]]:
+async def _no_events_forthcoming() -> AsyncGenerator[dict[str, Any]]:
     """An EventSource iterator that never yields -- forces _sse_events into a keep-alive wait."""
     for _ in ():  # pragma: no cover -- makes this a generator; the loop body never runs
         yield _
     await asyncio.Event().wait()
 
 
-async def _one_event(event: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+async def _one_event(event: dict[str, Any]) -> AsyncGenerator[dict[str, Any]]:
     """An EventSource iterator yielding exactly one event, then ending."""
     yield event
 
@@ -1106,3 +1111,32 @@ def test_json_router_bulk_delete_openapi_documents_result_schema() -> None:
         "$ref": "#/components/schemas/BulkDeleteResult"
     }
     assert "204" in responses
+
+
+async def test_sse_events_releases_the_subscription_when_cancelled_before_the_first_event(
+    override_crud_config: CrudConfigOverride,
+) -> None:
+    """A cancel right after the first frame closes the iterator, which was never iterated."""
+    override_crud_config(sse_keepalive_seconds=0.01)
+    sink = InMemoryEventSink(resource="hero")
+    subscriber_id, events = await sink.subscribe(None)
+    request = cast(Request, _StubRequest(disconnect_after_calls=None))
+    stream = crud_router_module._sse_events(request, subscriber_id, events)
+    assert (await anext(stream)).startswith("id: 0")
+    assert len(sink._queues) == 1
+    await stream.aclose()
+    assert sink._queues == {}
+
+
+async def test_sse_events_releases_the_subscription_with_an_event_step_in_flight() -> None:
+    """Closing while the pending __anext__ is still running releases without raising."""
+    sink = InMemoryEventSink(resource="hero")
+    subscriber_id, events = await sink.subscribe(None)
+    request = cast(Request, _StubRequest(disconnect_after_calls=None))
+    stream = crud_router_module._sse_events(request, subscriber_id, events)
+    await anext(stream)
+    consumer = asyncio.ensure_future(anext(stream))
+    await asyncio.sleep(0.05)
+    consumer.cancel()
+    await asyncio.gather(consumer, return_exceptions=True)
+    assert sink._queues == {}

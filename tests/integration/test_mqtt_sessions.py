@@ -1,13 +1,14 @@
 """Integration: transient vs durable subscriber sessions against the devcontainer's broker."""
 
 import asyncio
+import gc
 import json
 import os
 import threading
 import time
 import uuid
 from collections.abc import Callable
-from typing import cast
+from typing import TYPE_CHECKING, Any, cast
 
 import aiomqtt
 import paho.mqtt.client as paho
@@ -16,7 +17,16 @@ from paho.mqtt.enums import CallbackAPIVersion
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.properties import Properties
 
-from craftainer_crud.interfaces.base import MQTTEventSink, MQTTEventSource, _background_tasks
+from craftainer_crud.controllers import crud_router as crud_router_module
+from craftainer_crud.interfaces.base import (
+    EventIterator,
+    MQTTEventSink,
+    MQTTEventSource,
+    _background_tasks,
+)
+
+if TYPE_CHECKING:
+    from fastapi import Request
 
 _HOST = os.environ.get("MQTT_HOST")
 _PORT = int(os.environ.get("MQTT_PORT", "1883"))
@@ -177,3 +187,60 @@ async def test_without_session_ttl_the_session_survives_the_short_wait() -> None
     resource, subscriber_id = await _ttl_source_leaves_session(session_ttl=None)
     await asyncio.sleep(5)
     assert await _queued_after_reconnect(resource, subscriber_id) == 1
+
+
+async def _subscribed_client(
+    durable: bool,
+) -> tuple[MQTTEventSource, EventIterator[dict[str, Any]], aiomqtt.Client]:
+    """Subscribe against the broker, capturing the aiomqtt client the source builds."""
+    assert _HOST
+    created: list[aiomqtt.Client] = []
+    original = aiomqtt.Client.__init__
+
+    def spy(self: aiomqtt.Client, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        original(self, *args, **kwargs)
+        created.append(self)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(aiomqtt.Client, "__init__", spy)
+        source = MQTTEventSource(
+            hostname=_HOST, port=_PORT, resource=f"leak-{uuid.uuid4().hex}", keepalive=30
+        )
+        _, events = await source.subscribe(None, durable=durable)
+    (client,) = created
+    assert client._client.is_connected()
+    return source, events, client
+
+
+async def _assert_disconnected(client: aiomqtt.Client) -> None:
+    await asyncio.gather(*list(_background_tasks))
+    assert not client._client.is_connected()
+
+
+async def test_unstarted_iterator_is_released_by_aclose() -> None:
+    """aclose() before the first step disconnects the client and stops its network loop."""
+    _, events, client = await _subscribed_client(durable=False)
+    await events.aclose()
+    await _assert_disconnected(client)
+
+
+async def test_unstarted_iterator_is_released_by_garbage_collection() -> None:
+    """Dropping the iterator without iterating it disconnects the client."""
+    _, events, client = await _subscribed_client(durable=True)
+    del events
+    gc.collect()
+    await _assert_disconnected(client)
+
+
+async def test_sse_events_cancelled_before_the_first_event_releases_the_client() -> None:
+    """The SSE stream, cancelled right after its first frame, leaves no client connected."""
+    _, events, client = await _subscribed_client(durable=False)
+    stream = crud_router_module._sse_events(cast("Request", _NeverDisconnected()), "sub", events)
+    assert (await anext(stream)).startswith("id: 0")
+    await stream.aclose()
+    await _assert_disconnected(client)
+
+
+class _NeverDisconnected:
+    async def is_disconnected(self) -> bool:
+        return False

@@ -18,10 +18,11 @@ given filters" logic each factory's routes wrap in their own response format.
 """
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -47,6 +48,7 @@ from craftainer_crud.controllers.crud_query import (
     parse_include_unpublished,
     reject_filters_with_id,
 )
+from craftainer_crud.interfaces.base import EventIterator
 from craftainer_crud.interfaces.cache import StatsCache
 from craftainer_crud.manifest.registry import ManifestOptions, RegisteredResource
 from craftainer_crud.models.mixins import Schedulable
@@ -842,8 +844,8 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
 
 
 async def _sse_events(
-    request: Request, subscriber_id: str, events: AsyncIterator[dict[str, Any]]
-) -> AsyncIterator[str]:
+    request: Request, subscriber_id: str, events: EventIterator[dict[str, Any]]
+) -> AsyncGenerator[str]:
     """Render one EventSource subscription as an SSE byte stream.
 
     The first frame always carries `subscriber_id` (see EventSource.subscribe's own
@@ -857,7 +859,7 @@ async def _sse_events(
     as `request.is_disconnected()` reports the client is gone.
 
     Uses `asyncio.wait` (checking, not consuming, a still-pending task) rather than
-    `asyncio.wait_for` around `iterator.__anext__()` -- `wait_for` cancels its inner
+    `asyncio.wait_for` around `events.__anext__()` -- `wait_for` cancels its inner
     awaitable on timeout, which would tear down `events`'s underlying async generator
     (e.g. InMemoryEventSink._events/MQTTEventSource._events, both suspended in an
     `await` at that point) on every single keep-alive, silently ending the stream one
@@ -867,15 +869,17 @@ async def _sse_events(
     The `finally` below only cancels `pending`, never awaits it: on a real ASGI
     server, this generator's own cancellation (see the loop's own comment) leaves no
     room for a further `await` here to run to completion -- it gets cancelled again
-    immediately. `events`'s own cleanup (MQTTEventSource._events, InMemoryEventSink
-    needs none) accounts for this itself, via a detached task that outlives this
-    generator's cancellation -- see its own docstring.
+    immediately. `aclose()` below therefore starts the release synchronously before it
+    awaits anything (MQTTEventSource's disconnect is a detached task that outlives this
+    generator's cancellation -- see MQTTEventSource._events's docstring), and the
+    first-frame `yield` sits inside the `try` so a cancel before the first event still
+    releases the subscription. A generator never started at all (the response was
+    dropped before streaming) is covered by the iterator's garbage-collection release.
     """
-    yield f"id: 0\ndata: {json.dumps({'subscriber_id': subscriber_id})}\n\n"
-    sequence = 1
-    iterator = events.__aiter__()
     pending: asyncio.Task[dict[str, Any]] | None = None
     try:
+        yield f"id: 0\ndata: {json.dumps({'subscriber_id': subscriber_id})}\n\n"
+        sequence = 1
         while True:
             # On uvicorn (confirmed by tracing a real disconnect: uvicorn's own
             # RequestResponseCycle.run_asgi() cancels this whole generator's task
@@ -888,7 +892,7 @@ async def _sse_events(
             if await request.is_disconnected():  # pragma: no cover
                 return
             if pending is None:
-                pending = asyncio.ensure_future(iterator.__anext__())
+                pending = asyncio.ensure_future(events.__anext__())
             done, _ = await asyncio.wait({pending}, timeout=get_config().sse_keepalive_seconds)
             if not done:
                 yield ": keep-alive\n\n"
@@ -909,6 +913,15 @@ async def _sse_events(
     finally:
         if pending is not None:
             pending.cancel()
+        # Release the subscription even if it was never iterated (a cancel before the
+        # first event): `subscribe()` already acquired its resources.
+        if pending is None:
+            await events.aclose()
+        else:
+            # A plain generator refuses to close while the cancelled `pending` step
+            # is still unwinding; that unwinding runs its own cleanup.
+            with contextlib.suppress(RuntimeError):
+                await events.aclose()
 
 
 def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel](
