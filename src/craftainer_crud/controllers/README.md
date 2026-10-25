@@ -98,7 +98,9 @@ param below to all three factories identically, so a resource passing
 JSON, XML, and (client-side, via generated JS) the web UI, not JSON-only):
 `?include_archived=true`/`?include_unpublished=true` on the existing `GET`
 override the default Archivable/Schedulable exclusion (see
-`../repositories/README.md`). `POST <prefix>/clone?id=` is always added
+`../repositories/README.md`), and `?only_archived=true` narrows a list to the
+archived rows (422 next to an explicit `include_archived=false`, and on `/stats`
+and the write routes; see `../../../docs/manifest.md`). `POST <prefix>/clone?id=` is always added
 (fully generic, no mixin needed): it builds `create_schema` from the
 fields it itself declares, read off the existing record, so a
 Draftable/Archivable/Schedulable model's server-assigned fields are never

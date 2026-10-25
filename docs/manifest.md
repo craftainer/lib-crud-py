@@ -90,8 +90,9 @@ Operators by `value_type`: `integer`/`number`/`date`/`datetime` take
 `enum` take `eq in`. Datetimes are sent as ISO 8601; a timezone-aware value is
 converted to UTC. `sort=a,-b` is comma-separated, a leading `-` meaning
 descending. Reserved query keys are `skip`, `limit`, `sort`, `id`,
-`include_archived` and `include_unpublished`. An unknown field, an operator the
-field does not take, or an unparsable value is a client error, never ignored.
+`include_archived`, `only_archived` and `include_unpublished`. An unknown field,
+an operator the field does not take, or an unparsable value is a client error,
+never ignored.
 For a float field (`number`) `nan` and `inf` are unparsable: `422`.
 
 **`?id=` takes no filters.** Every route that takes `?id=` (`GET`, `PATCH`, `DELETE`, `clone`, `publish`, `restore`, `revisions`) with `?id=` together with
@@ -99,6 +100,24 @@ any non-reserved query key (a filter, recognised or not) is `422` (`loc`
 `["query", <key>]`, `filters cannot be combined with id`); nothing is read or
 written. Address one record by `id`, or many by filters, never both. The
 reserved keys may accompany `?id=`.
+
+**Archived rows.** Archivable models hide archived rows from a list by default.
+`?include_archived=true` returns live and archived rows together;
+`?only_archived=true` returns only the rows with `archived_at` set (the trash view).
+`only_archived` takes the boolean vocabulary of the other flags (`true`/`1`,
+`false`/`0`; anything else is `422`), defaults to `false`, and combines with filters,
+`sort`, `skip` and `limit`. It implies
+`include_archived`: `only_archived=true` next to `include_archived=true` or none is
+fine, but next to an explicit `include_archived=false` it is contradictory and `422`
+(`loc` `["query", "only_archived"]`, `cannot be combined with include_archived=false`);
+the check also applies with `?id=`. `only_archived=false` changes nothing. It narrows
+only a list: a single-record `GET ?id=`, `/stats` and
+the write routes (`PATCH`, `DELETE`, `restore`) answer `422` (`loc`
+`["query", "only_archived"]`, `applies to list reads only`) rather than act on live
+rows by mistake. Every route that reads `include_archived` also rejects a malformed
+`only_archived` or the contradictory pair. A model that is not Archivable (no `archived_at`; see `archive_restore`)
+ignores it, as it does `include_archived`. Like the other reserved keys it is read
+from the raw query string and is not declared as an OpenAPI parameter.
 
 ### Capabilities
 

@@ -309,6 +309,80 @@ async def test_restore_single_record_clears_archived_at() -> None:
         assert await repository.get(created.id) is not None
 
 
+async def test_only_archived_against_real_postgres() -> None:
+    """list()/count() with only_archived return just archived rows (with filters/sort/paging).
+
+    Runs inside one uncommitted session, same isolation as the tests above. Rows are
+    told apart by a unique name prefix, since the shared table may hold other rows.
+    """
+    async with async_session_factory() as session:
+        repository = SQLAlchemyRepository(session, Hero)
+        live = await repository.create(
+            {"name": "OnlyArch Live", "powers": ["A"], "owner_id": "tester"}
+        )
+        first = await repository.create(
+            {"name": "OnlyArch A", "powers": ["A"], "owner_id": "tester"}
+        )
+        second = await repository.create(
+            {"name": "OnlyArch B", "powers": ["A"], "owner_id": "tester"}
+        )
+        assert await repository.delete(first.id) is True
+        assert await repository.delete(second.id) is True
+        prefix = [FilterClause("name", FilterOp.ICONTAINS, "OnlyArch")]
+
+        archived = await repository.list(only_archived=True, filters=prefix)
+        assert {hero.id for hero in archived} == {first.id, second.id}
+        assert await repository.count(only_archived=True, filters=prefix) == 2
+        # Default and include_archived keep their meaning.
+        assert [hero.id for hero in await repository.list(filters=prefix)] == [live.id]
+        assert await repository.count(include_archived=True, filters=prefix) == 3
+        # only_archived wins over include_archived.
+        assert (
+            await repository.count(only_archived=True, include_archived=True, filters=prefix) == 2
+        )
+
+        name_b = [FilterClause("name", FilterOp.EQ, "OnlyArch B")]
+        assert [h.id for h in await repository.list(only_archived=True, filters=name_b)] == [
+            second.id
+        ]
+        assert await repository.count(only_archived=True, filters=name_b) == 1
+        assert (
+            await repository.count(
+                only_archived=True, filters=[FilterClause("name", FilterOp.EQ, "OnlyArch Live")]
+            )
+            == 0
+        )
+        page = await repository.list(
+            only_archived=True, filters=prefix, sort=[SortClause("name", descending=True)], limit=1
+        )
+        assert [hero.id for hero in page] == [second.id]
+        page = await repository.list(
+            only_archived=True,
+            filters=prefix,
+            sort=[SortClause("name", descending=True)],
+            limit=1,
+            skip=1,
+        )
+        assert [hero.id for hero in page] == [first.id]
+
+
+async def test_only_archived_is_ignored_without_archived_at_against_real_postgres() -> None:
+    """A model with no archived_at ignores only_archived, exactly as include_archived."""
+    async with engine.begin() as conn:
+        await conn.run_sync(
+            lambda sync_conn: _plain_record_table.create(sync_conn, checkfirst=True)
+        )
+    try:
+        async with async_session_factory() as session:
+            repository = SQLAlchemyRepository(session, _PlainRecord)
+            await repository.create({"value": 1})
+            assert len(await repository.list(only_archived=True)) == 1
+            assert await repository.count(only_archived=True) == 1
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(_plain_record_table.drop)
+
+
 async def test_stats_against_real_postgres() -> None:
     """stats() computes count/numeric/categorical/time-series/lifecycle via real SQL.
 

@@ -63,6 +63,7 @@ class CompatCRUD[LegacySchemaT: BaseModel, SchemaT: BaseModel, ModelT]:
         filters: Sequence[FilterClause] = (),
         sort: Sequence[SortClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> list[LegacySchemaT]:
         """Return up to `limit` matching records in the legacy shape, skipping the first `skip`."""
@@ -72,6 +73,7 @@ class CompatCRUD[LegacySchemaT: BaseModel, SchemaT: BaseModel, ModelT]:
             filters=filters,
             sort=sort,
             include_archived=include_archived,
+            only_archived=only_archived,
             include_unpublished=include_unpublished,
         )
         return [self._to_legacy(item) for item in items]
@@ -81,6 +83,7 @@ class CompatCRUD[LegacySchemaT: BaseModel, SchemaT: BaseModel, ModelT]:
         *,
         filters: Sequence[FilterClause] = (),
         include_archived: bool = False,
+        only_archived: bool = False,
         include_unpublished: bool = False,
     ) -> int:
         """Return how many records match the given filters.
@@ -91,6 +94,7 @@ class CompatCRUD[LegacySchemaT: BaseModel, SchemaT: BaseModel, ModelT]:
         return await self._crud.count(
             filters=filters,
             include_archived=include_archived,
+            only_archived=only_archived,
             include_unpublished=include_unpublished,
         )
 
