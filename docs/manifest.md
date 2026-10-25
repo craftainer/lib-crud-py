@@ -140,7 +140,7 @@ they are flags so another implementation can differ.
 | `resource` | The label inside each event's `resource` member. It carries **no version**: v1 and v2 of one model publish to, and share, one stream, so a client filters by `snapshot` shape or ignores the difference. |
 | `resume_param` | Query parameter that resumes a subscription (`subscriber_id`); the `Last-Event-ID` header is accepted as a fallback. |
 | `replay` | `persistent`: events missed while disconnected are replayed on resume (MQTT-backed). `none`: a reconnect starts fresh (in-memory). |
-| `keepalive_seconds` | Idle seconds before a `: keep-alive` comment frame. |
+| `keepalive_seconds` | Idle seconds before a `: keep-alive` comment frame; a finite number greater than 0 (the Python server rejects any other `sse_keepalive_seconds` at configuration time; clients should still guard against 0). |
 | `actions` | Actions the stream can carry: a subset of `create`, `update`, `delete`, `restore` (bulk actions emit one event per record). |
 
 Stream frames: the first is `id: 0` with `data: {"subscriber_id": "..."}` (store
