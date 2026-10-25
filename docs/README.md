@@ -11,8 +11,6 @@ AI-assisted coding workflow (`CLAUDE.md` at the repo root covers that).
   and key design decisions.
 - `adrs/` — Architecture Decision Records: app-specific decisions and
   the reasoning behind them. See `adrs/README.md`.
-- `manifest.md` — the CRUD manifest v1 spec, including who consumes it
-  (the SDKs, the views, the Rust server) and what they rely on.
 - `plans/` — working plans for in-progress or upcoming work. See
   `plans/README.md`.
 - `frs/` — functional requirements: what the system must do. See
