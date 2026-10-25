@@ -1,5 +1,6 @@
 """Unit test: server-minted, HMAC-signed, resource-scoped subscriber ids."""
 
+import gc
 import hashlib
 import hmac
 
@@ -118,3 +119,32 @@ async def test_in_memory_sink_resumes_its_own_id_and_scopes_ids_per_resource() -
     subscriber_id, _ = await hero.subscribe(None)
     assert (await hero.subscribe(subscriber_id))[0] == subscriber_id
     assert (await quest.subscribe(subscriber_id))[0] != subscriber_id
+
+
+async def test_in_memory_sink_aclose_before_iterating_drops_the_queue() -> None:
+    """An iterator closed without being iterated no longer holds its queue."""
+    sink = InMemoryEventSink(resource="hero")
+    _, events = await sink.subscribe(None)
+    assert len(sink._queues) == 1
+    await events.aclose()  # type: ignore[attr-defined]
+    assert sink._queues == {}
+
+
+async def test_in_memory_sink_drops_the_queue_of_a_garbage_collected_iterator() -> None:
+    """Dropping an unstarted iterator releases its queue."""
+    sink = InMemoryEventSink(resource="hero")
+    _, events = await sink.subscribe(None)
+    del events
+    gc.collect()
+    assert sink._queues == {}
+
+
+async def test_in_memory_sink_release_leaves_a_re_registered_queue_alone() -> None:
+    """Closing a stale iterator does not remove the queue a resumed id now uses."""
+    sink = InMemoryEventSink(resource="hero")
+    subscriber_id, old = await sink.subscribe(None)
+    _, new = await sink.subscribe(subscriber_id)
+    await old.aclose()  # type: ignore[attr-defined]
+    assert list(sink._queues) == [subscriber_id]
+    await new.aclose()  # type: ignore[attr-defined]
+    assert sink._queues == {}

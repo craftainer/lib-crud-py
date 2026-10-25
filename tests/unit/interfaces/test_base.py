@@ -10,6 +10,7 @@ from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
+import aiomqtt
 import pytest
 from pydantic import BaseModel, ConfigDict
 
@@ -21,6 +22,7 @@ from craftainer_crud.interfaces.base import (
     OwnerScope,
     _background_tasks,
     _mqtt_connection_kwargs,
+    _schedule_disconnect,
 )
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_crud.repositories.stats import ResourceStats, TimeBucket
@@ -832,7 +834,9 @@ async def test_mqtt_event_source_logs_a_failed_disconnect(caplog: pytest.LogCapt
     `finally` -- this asserts that detached task's own failure still leaves a trace.
     """
     source = MQTTEventSource(hostname="broker", port=1883, resource="hero", keepalive=60)
-    events = source._events(_FailingDisconnectClient())  # type: ignore[arg-type]
+    client = cast("aiomqtt.Client", _FailingDisconnectClient())
+    loop = asyncio.get_running_loop()
+    events = source._events(client, lambda: _schedule_disconnect(client, loop))
 
     with caplog.at_level("DEBUG", logger="craftainer_crud.interfaces.base"):
         assert [event async for event in events] == []

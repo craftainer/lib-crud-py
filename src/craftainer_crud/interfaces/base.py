@@ -24,7 +24,8 @@ import asyncio
 import json
 import logging
 import ssl
-from collections.abc import AsyncIterator, Callable, Sequence
+import warnings
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -143,6 +144,14 @@ class EventSource(Protocol):
         on reconnect. Use it for a long-lived in-process consumer that always resubscribes
         from scratch (a cache invalidator) so each restart does not orphan a session.
         `GET <prefix>/events` never exposes this: its clients rely on replay.
+
+        Resources (an MQTT client and its network loop, an in-memory queue) are acquired
+        *here*, before the iterator's first step, so the caller owns them from the moment
+        this returns: `aclose()` the iterator when done with it, started or not (for
+        example with `contextlib.aclosing`, as for any async generator, PEP 525/533).
+        `aclose()` and garbage collection are the only things the library guarantees
+        release them; a task cancelled between `subscribe()` returning and the first step
+        leaks them unless the caller closes the iterator in a `finally`.
         """
         ...
 
@@ -192,6 +201,64 @@ _MAX_SESSION_TTL = 2**32 - 1
 # asyncio.create_task); `add_done_callback` below is what lets each entry clean itself
 # up once its disconnect actually finishes, so this doesn't grow unboundedly.
 _background_tasks: set[asyncio.Task[None]] = set()
+
+
+class _ReleasingEvents:
+    """The `AsyncIterator` `EventSource.subscribe` returns: an async generator plus a release.
+
+    `subscribe()` acquires its resources (an MQTT client, a queue registration) eagerly, so
+    a bare async generator cannot own them: a generator that was never started has no
+    `finally` to run, and `aclose()` on it is a no-op. This wrapper holds the one-shot
+    `release` callable instead. `aclose()` runs it first, synchronously, then closes the
+    generator; garbage collection runs it too (best-effort, see `__del__`). The generator
+    itself calls the same `release` in its own `finally`, and the once-guard makes the
+    repeats harmless.
+
+    Callers should `aclose()` the iterator (for example with `contextlib.aclosing`), as
+    for any async generator (PEP 525, PEP 533); only `aclose()` and garbage collection are
+    guaranteed to release what the subscription holds.
+    """
+
+    def __init__(
+        self,
+        make_events: Callable[[Callable[[], None]], AsyncIterator[dict[str, Any]]],
+        release: Callable[[], None],
+    ) -> None:
+        released = False
+
+        def release_once() -> None:
+            nonlocal released
+            if not released:
+                released = True
+                release()
+
+        self._release = release_once
+        self._events = make_events(release_once)
+
+    def __aiter__(self) -> _ReleasingEvents:
+        return self
+
+    async def __anext__(self) -> dict[str, Any]:
+        return await self._events.__anext__()
+
+    async def aclose(self) -> None:
+        """Release the subscription's resources, whether or not it was ever iterated."""
+        # Release before awaiting anything: when the caller is itself being cancelled, a
+        # further await here is cancelled again, but the release has already been started.
+        self._release()
+        try:
+            await cast("AsyncGenerator[dict[str, Any]]", self._events).aclose()
+        except RuntimeError:
+            # A `__anext__()` is still running (a cancelled consumer task that has not
+            # unwound yet); that task's cancellation runs the generator's `finally`.
+            logger.debug("event iterator busy during aclose", exc_info=True)
+
+    def __del__(self) -> None:
+        """Best-effort release when the iterator is dropped; never raises."""
+        try:
+            self._release()
+        except Exception:  # pragma: no cover -- defensive; __del__ must not raise
+            logger.debug("event iterator release failed during GC", exc_info=True)
 
 
 @dataclass(frozen=True)
@@ -332,6 +399,13 @@ class MQTTEventSource:
         this client ID's session was ever registered with the broker at all, so a
         message published in the gap had no persistent session to queue against and
         was simply dropped, never replayed on reconnect.
+
+        The price of connecting eagerly is that the returned iterator owns a live client
+        before anyone iterates it, so it is a `_ReleasingEvents`, not a bare generator:
+        its `aclose()` disconnects the client even when it was never started, and
+        garbage collection does so best-effort (a `ResourceWarning`, no disconnect, when
+        no event loop is running). Callers must `aclose()` it, for example with
+        `contextlib.aclosing`; see docs/adrs/0006-release-unstarted-event-iterators.md.
         """
         resolved = resolve_subscriber_id(self.resource, subscriber_id)
         import aiomqtt  # noqa: PLC0415 -- optional `[mqtt]` extra, only needed here
@@ -348,10 +422,22 @@ class MQTTEventSource:
             ),
         )
         await client.__aenter__()
-        await client.subscribe(f"crud-events/{self.resource}", qos=1)
-        return resolved, self._events(client)
+        loop = asyncio.get_running_loop()
+        try:
+            await client.subscribe(f"crud-events/{self.resource}", qos=1)
+        except BaseException:
+            # No iterator exists yet to own the client, so release it here (detached, so
+            # a cancellation of this call cannot cut the disconnect short).
+            _schedule_disconnect(client, loop)
+            raise
+        return resolved, _ReleasingEvents(
+            lambda release: self._events(client, release),
+            lambda: _schedule_disconnect(client, loop),
+        )
 
-    async def _events(self, client: aiomqtt.Client) -> AsyncIterator[dict[str, Any]]:
+    async def _events(
+        self, client: aiomqtt.Client, release: Callable[[], None]
+    ) -> AsyncIterator[dict[str, Any]]:
         """Yield decoded event envelopes from `client`'s already-subscribed session,
         disconnecting once the caller stops consuming (return, exception, or
         cancellation -- see `subscribe()`'s own docstring for why connecting happens
@@ -368,30 +454,55 @@ class MQTTEventSource:
         here, by contrast, is independent of this generator's own cancellation and gets
         to actually finish disconnecting.
         """
-
-        async def _disconnect() -> None:
-            # Best-effort: this runs detached (see the docstring above), so there's no
-            # caller left to usefully react to a disconnect failure -- catching it here
-            # (rather than letting it become an "exception was never retrieved" log)
-            # still logs it, so a broker-side auth/network anomaly during teardown
-            # leaves a trace instead of vanishing silently. `# pragma: no cover` below
-            # is for tests/e2e specifically: its one live process talks to a real,
-            # reachable Mosquitto broker, so a clean disconnect can never fail there --
-            # tests/unit/interfaces/test_base.py's test_mqtt_event_source_logs_a_failed_
-            # disconnect exercises this branch directly (a stand-in client whose
-            # __aexit__ always raises) and still counts toward its own 95% gate.
-            try:
-                await client.__aexit__(None, None, None)
-            except Exception:  # pragma: no cover -- see comment above
-                logger.debug("MQTT disconnect failed", exc_info=True)
-
         try:
             async for message in client.messages:
                 yield json.loads(message.payload)
         finally:
-            task = asyncio.ensure_future(_disconnect())
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
+            release()
+
+
+def _schedule_disconnect(client: aiomqtt.Client, loop: asyncio.AbstractEventLoop) -> None:
+    """Start the detached disconnect task for `client` on `loop`, the loop that owns it.
+
+    `loop` is the loop `subscribe()` ran on: the client's network loop and asyncio
+    primitives are bound to it, so the disconnect must run there even when garbage
+    collection triggers this from another thread or while another loop is running. If
+    that loop is closed nothing can finish an async disconnect: warn instead of raising.
+
+    Best-effort: this runs detached (see `MQTTEventSource._events`), so there is no
+    caller left to usefully react to a disconnect failure -- catching it here (rather
+    than letting it become an "exception was never retrieved" log) still logs it, so a
+    broker-side auth/network anomaly during teardown leaves a trace instead of vanishing
+    silently.
+    """
+    if loop.is_closed():
+        warnings.warn(
+            "MQTT event iterator released after its event loop closed; "
+            "its client was not disconnected",
+            ResourceWarning,
+            stacklevel=2,
+        )
+        return
+
+    async def _disconnect() -> None:
+        try:
+            await client.__aexit__(None, None, None)
+        except Exception:  # pragma: no cover -- a real broker's clean disconnect never fails
+            logger.debug("MQTT disconnect failed", exc_info=True)
+
+    def _start() -> None:
+        task = loop.create_task(_disconnect())
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is loop:
+        _start()
+    else:
+        loop.call_soon_threadsafe(_start)
 
 
 class InMemoryEventSink:
@@ -451,10 +562,16 @@ class InMemoryEventSink:
         resolved = resolve_subscriber_id(self._resource or "", subscriber_id)
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._queues[resolved] = queue
-        return resolved, self._events(resolved, queue)
+
+        def release() -> None:
+            # Only drop our own queue: the id may have been re-registered since.
+            if self._queues.get(resolved) is queue:
+                del self._queues[resolved]
+
+        return resolved, _ReleasingEvents(lambda once: self._events(queue, once), release)
 
     async def _events(
-        self, subscriber_id: str, queue: asyncio.Queue[dict[str, Any]]
+        self, queue: asyncio.Queue[dict[str, Any]], release: Callable[[], None]
     ) -> AsyncIterator[dict[str, Any]]:
         """Yield events as they're published, forever -- caller stops iterating on disconnect.
 
@@ -468,7 +585,7 @@ class InMemoryEventSink:
             while True:
                 yield await queue.get()
         finally:
-            self._queues.pop(subscriber_id, None)
+            release()
 
 
 @dataclass(frozen=True)

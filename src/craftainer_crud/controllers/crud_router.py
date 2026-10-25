@@ -18,6 +18,7 @@ given filters" logic each factory's routes wrap in their own response format.
 """
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import re
@@ -867,15 +868,18 @@ async def _sse_events(
     The `finally` below only cancels `pending`, never awaits it: on a real ASGI
     server, this generator's own cancellation (see the loop's own comment) leaves no
     room for a further `await` here to run to completion -- it gets cancelled again
-    immediately. `events`'s own cleanup (MQTTEventSource._events, InMemoryEventSink
-    needs none) accounts for this itself, via a detached task that outlives this
-    generator's cancellation -- see its own docstring.
+    immediately. `aclose()` below therefore starts the release synchronously before it
+    awaits anything (MQTTEventSource's disconnect is a detached task that outlives this
+    generator's cancellation -- see MQTTEventSource._events's docstring), and the
+    first-frame `yield` sits inside the `try` so a cancel before the first event still
+    releases the subscription. A generator never started at all (the response was
+    dropped before streaming) is covered by the iterator's garbage-collection release.
     """
-    yield f"id: 0\ndata: {json.dumps({'subscriber_id': subscriber_id})}\n\n"
-    sequence = 1
     iterator = events.__aiter__()
     pending: asyncio.Task[dict[str, Any]] | None = None
     try:
+        yield f"id: 0\ndata: {json.dumps({'subscriber_id': subscriber_id})}\n\n"
+        sequence = 1
         while True:
             # On uvicorn (confirmed by tracing a real disconnect: uvicorn's own
             # RequestResponseCycle.run_asgi() cancels this whole generator's task
@@ -909,6 +913,18 @@ async def _sse_events(
     finally:
         if pending is not None:
             pending.cancel()
+        # Release the subscription even if it was never iterated (a cancel before the
+        # first event): `subscribe()` already acquired its resources. A source without
+        # `aclose` (a custom EventSource) has nothing for us to release.
+        aclose = getattr(iterator, "aclose", None)
+        if aclose is not None:
+            if pending is None:
+                await aclose()
+            else:
+                # A plain generator refuses to close while the cancelled `pending` step
+                # is still unwinding; that unwinding runs its own cleanup.
+                with contextlib.suppress(RuntimeError):
+                    await aclose()
 
 
 def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel](
