@@ -254,3 +254,75 @@ for byte: the same `properties` names, the same `required` set, and the same
 detail and not compared). Everything else is compared exactly. An SDK passes by
 loading every fixture and exposing the same resources, fields, operators, paths
 and cache hints.
+
+## Consumers
+
+How the other pieces of the craftainer family read this manifest, so a change to it
+can be checked against them.
+
+### Discovery, in one paragraph
+
+A client starts from the server's origin, fetches `GET
+/.well-known/api-catalog` (RFC 9727, `application/linkset+json`; no
+authentication), takes the first `describedby` link whose `profile` is
+`https://craftainer.github.io/schemas/crud-manifest/v1`, and fetches that URL
+(`/api/_crud/manifest` on the Python server) with its bearer token. The
+response is filtered to what that caller may read. The catalog does not
+register a new `/.well-known/` name, and its `service-desc` link is present
+only when the serving app exposes an OpenAPI document (see `api_catalog_router`
+in the README).
+
+### Who reads it
+
+| Consumer | What it reads | Where it is specified |
+| --- | --- | --- |
+| `craftainer-crud-sdk` (PyPI, `lib-crud-sdk-py`) | Catalog, then manifest on first use; `fields`/`filter_ops`/`sortable` to validate a query before sending; `paths` and `capabilities` to gate operations; `pagination` for iterators; `cache` hints to default each resource's cache policy; `capabilities.events` for the SSE stream and its resume parameter | its README and ADR 0002 |
+| `@craftainer/crud-sdk` (npm, `lib-crud-sdk-ts`) | The same, in the same order, with byte-identical query strings (a shared URL-parity table); `crud-sdk-codegen` writes TypeScript types from the manifest's `schemas` | its README and ADR 0002 |
+| `@craftainer/crud-views` (npm, `lib-crud-views-ts`) | Through the TS SDK and TanStack Query: capabilities decide which views and actions appear; `fields` plus the `read`/`create`/`update` schemas become field descriptors that pick display, input and filter renderers; `categorical` fields feed facet filters and category charts, `numeric` ones the forecast | its ADR 0002 and the I4 contract in `docs/contracts/` |
+| `lib-crud-rs` (Rust server) | Serves the same document and runs the same fixtures; where it cannot match this server it records the gap | its ADR 0004 |
+
+The apps that mount the manifest (`template-fastapi`, with `template-react` as
+its UI client) are covered by their own ADRs; this section does not repeat them.
+
+### What every consumer relies on
+
+These are the parts of the contract a change here would break for all of them.
+Each is stated in the sections above.
+
+- **Unknown members are ignored.** Consumers parse the members they know and
+  skip the rest, so an additive member needs no coordinated release.
+- **`manifest_version` is checked first.** Both SDKs reject a document whose
+  version they do not know. A breaking change therefore means a `v2` schema, a
+  second `describedby` link with its own `profile`, and new SDK releases that
+  learn it; old clients keep reading `v1`.
+- **`paths` are used as given.** No consumer builds a route suffix, and a
+  sub-route is present exactly when its capability is on.
+- **Resource identity is `name` + `api_version`.** SDK cache keys carry the
+  version, so versions of one model never share a cache entry, while all of
+  them share one event stream per `name`.
+- **The manifest is per caller.** Its `ETag` covers the filtered body, so a
+  cache keyed on the URL alone would mix callers; the SDKs scope entries by a
+  hash of the whole bearer token.
+- **`cache` hints are hints about this server.** `revalidate_only` and
+  `max_age: 0` mean the SDKs revalidate every reuse. They grant a fresh window
+  only while the resource's SSE stream is connected, and events invalidate
+  cached entries rather than applying snapshots. A manifest from a server that
+  does not implement conditional requests must say so (`etag: false`), as
+  `lib-crud-rs` does.
+- **Browser clients need the host's CORS settings** (see "CORS" above). This
+  package sets no CORS headers; the app that mounts it must expose `ETag` and
+  `X-Stats-Cache` and allow `If-Match`, `If-None-Match` and `Authorization`.
+  A same-origin proxy avoids the need.
+
+### Changing the manifest
+
+1. Decide whether the change is additive (an optional member) or breaking
+   (removal, a newly required member, a changed meaning). The rules are in
+   `manifest.md`, "Versioning and evolution".
+2. Update the schema, `manifest.md` and the fixtures in
+   `tests/fixtures/manifest/` here first. The fixtures are vendored by
+   `lib-crud-rs` and used by both SDKs, so they are what the other repos test
+   against.
+3. Release this package first, then the consumers that need the change: a
+   consumer cannot be tested against a manifest member that no released server
+   emits yet.
