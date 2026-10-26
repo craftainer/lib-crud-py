@@ -6,7 +6,7 @@ name = "craftainer-crud"
 # real version, stamped into the build at release time without a commit.
 version = "0.0.0"
 description = "Generic CRUD framework for FastAPI: router factories, repositories, model and view bases"
-license = "GPL-3.0-or-later"
+license = "GPL-3.0-only"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
