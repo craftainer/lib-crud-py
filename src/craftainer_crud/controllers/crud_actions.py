@@ -66,7 +66,9 @@ async def _check_bulk_action_size(
     still match every row -- counting first (cheap relative to the mutation itself)
     catches that before any row is touched. `include_archived` is passed through to
     `count()` so a bulk *restore* (which only ever targets archived rows) is sized
-    correctly -- see resolve_restore below.
+    correctly -- see resolve_restore below. `include_unpublished` does the same for a
+    bulk delete, so the count matches the rows the delete will reach (the flag defaults to
+    False here, like `count`; resolve_delete passes its own parsed value).
 
     The raise below is `# pragma: no cover` for tests/e2e specifically: triggering it
     live would mean creating over bulk_action_max_matched (1000 by default) records
