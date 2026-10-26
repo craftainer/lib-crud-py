@@ -60,7 +60,11 @@ driver (for example `asyncpg`) for `SQLAlchemyRepository`.
 
 A server describes its resources, their filters, optional routes and cache hints in
 one JSON document ([`docs/manifest.md`](docs/manifest.md), schema
-[`schemas/crud-manifest/v1.json`](schemas/crud-manifest/v1.json)). Wire it up once:
+[`schemas/crud-manifest/v1.json`](schemas/crud-manifest/v1.json)).
+[`docs/manifest.md`](docs/manifest.md) is the contract between a CRUD server and its
+SDKs and views: the spec, discovery, versioning and conformance fixtures. The
+machine-readable schema lives in [`schemas/crud-manifest/`](schemas/crud-manifest/).
+Wire it up once:
 
 ```python
 from craftainer_crud.controllers.crud_manifest import api_catalog_router, crud_manifest_router
