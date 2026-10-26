@@ -119,7 +119,11 @@ class CompatCRUD[LegacySchemaT: BaseModel, SchemaT: BaseModel, ModelT]:
         updated = await self._crud.update_many(filters=filters, data=self._from_legacy_update(data))
         return [self._to_legacy(item) for item in updated]
 
-    async def delete_many(self, *, filters: Sequence[FilterClause]) -> Sequence[LegacySchemaT]:
+    async def delete_many(
+        self, *, filters: Sequence[FilterClause], include_unpublished: bool = True
+    ) -> Sequence[LegacySchemaT]:
         """Delete every record matching the filters; return the records that were deleted."""
-        deleted = await self._crud.delete_many(filters=filters)
+        deleted = await self._crud.delete_many(
+            filters=filters, include_unpublished=include_unpublished
+        )
         return [self._to_legacy(item) for item in deleted]

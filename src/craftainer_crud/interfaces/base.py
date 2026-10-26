@@ -693,8 +693,13 @@ class CRUDLike[SchemaT: BaseModel](Protocol):
         """Apply the given input view's set fields to every matching record; return them."""
         ...
 
-    async def delete_many(self, *, filters: Sequence[FilterClause]) -> Sequence[SchemaT]:
-        """Delete every record matching the filters; return the records that were deleted."""
+    async def delete_many(
+        self, *, filters: Sequence[FilterClause], include_unpublished: bool = True
+    ) -> Sequence[SchemaT]:
+        """Delete every record matching the filters; return the records that were deleted.
+
+        `include_unpublished=False` leaves not-yet-or-no-longer-published rows alone.
+        """
         ...
 
     async def stats(
@@ -960,9 +965,17 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
             await self._publish_event(record_id=result.id, action="update", snapshot=result)  # type: ignore[attr-defined]
         return results
 
-    async def delete_many(self, *, filters: Sequence[FilterClause]) -> Sequence[SchemaT]:
-        """Delete every record matching the filters; return the records that were deleted."""
-        instances = await self._repository.delete_many(filters=self._scoped(filters))
+    async def delete_many(
+        self, *, filters: Sequence[FilterClause], include_unpublished: bool = True
+    ) -> Sequence[SchemaT]:
+        """Delete every record matching the filters; return the records that were deleted.
+
+        `include_unpublished` defaults to True (unlike `list`): a bulk delete reaches
+        scheduled rows unless the caller passes False.
+        """
+        instances = await self._repository.delete_many(
+            filters=self._scoped(filters), include_unpublished=include_unpublished
+        )
         results = [self._schema.model_validate(instance) for instance in instances]
         for result in results:
             await self._record_revision(record_id=result.id, action="delete", snapshot=result)  # type: ignore[attr-defined]

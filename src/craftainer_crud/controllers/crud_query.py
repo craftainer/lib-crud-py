@@ -358,8 +358,8 @@ def _query_error(key: str, msg: str) -> RequestValidationError:
     return RequestValidationError([{"loc": ("query", key), "msg": msg, "type": "value_error"}])
 
 
-def _parse_bool_flag(params: QueryParams, key: str) -> bool:
-    """Parse a `?<key>=true|false` boolean query flag, defaulting to False when absent.
+def _parse_bool_flag(params: QueryParams, key: str, *, default: bool = False) -> bool:
+    """Parse a `?<key>=true|false` boolean query flag, defaulting to `default` when absent.
 
     Shares `_cast_bool`'s "true"/"1"/"false"/"0" vocabulary; an unrecognized value
     is a 422 (RequestValidationError), matching every other filter value's own
@@ -367,7 +367,7 @@ def _parse_bool_flag(params: QueryParams, key: str) -> bool:
     """
     raw = params.get(key)
     if raw is None:
-        return False
+        return default
     try:
         return _cast_bool(raw)
     except ValueError as exc:
@@ -427,6 +427,16 @@ def parse_include_unpublished(params: QueryParams) -> bool:
     return _parse_bool_flag(params, "include_unpublished")
 
 
+def parse_bulk_delete_include_unpublished(params: QueryParams) -> bool:
+    """Parse `?include_unpublished=` on a bulk DELETE, where an absent flag means True.
+
+    Reads and the other writes treat it as default-false; bulk delete defaults to true so a
+    caller that never sends it keeps deleting scheduled rows as before. `false` leaves
+    not-yet-or-no-longer-published rows alone.
+    """
+    return _parse_bool_flag(params, "include_unpublished", default=True)
+
+
 __all__: Sequence[str] = (
     "DEFAULT_LIMIT",
     "MAX_LIMIT",
@@ -435,6 +445,7 @@ __all__: Sequence[str] = (
     "FieldSpec",
     "describe_fields",
     "field_specs",
+    "parse_bulk_delete_include_unpublished",
     "parse_filters",
     "parse_include_archived",
     "parse_include_unpublished",

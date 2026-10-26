@@ -443,3 +443,33 @@ async def test_stats_lifecycle_is_none_without_any_mixin() -> None:
 async def test_get_missing_returns_none(repository: InMemoryRepository[Hero]) -> None:
     """get() of an id that was never created returns None."""
     assert await repository.get(999) is None
+
+
+async def test_delete_many_include_unpublished(repository: InMemoryRepository[Hero]) -> None:
+    """delete_many() deletes scheduled rows by default; include_unpublished=False keeps them.
+
+    A draft (`is_draft`) is not "unpublished" here: only the publish_at/unpublish_at window
+    is. Archived rows are never touched either way.
+    """
+    now = datetime.now(UTC).replace(tzinfo=None)
+    draft = await repository.create({"name": "Bulk Draft", "powers": ["A"], "is_draft": True})
+    live = await repository.create({"name": "Bulk Live", "powers": ["A"], "is_draft": False})
+    future = await repository.create(
+        {"name": "Bulk Future", "powers": ["A"], "publish_at": now + timedelta(days=1)}
+    )
+    expired = await repository.create(
+        {"name": "Bulk Expired", "powers": ["A"], "unpublish_at": now - timedelta(days=1)}
+    )
+    archived = await repository.create({"name": "Bulk Archived", "powers": ["A"]})
+    assert await repository.delete(archived.id)
+    bulk = [FilterClause("name", FilterOp.ICONTAINS, "Bulk")]
+
+    kept = await repository.delete_many(filters=bulk, include_unpublished=False)
+    assert {hero.id for hero in kept} == {draft.id, live.id}
+    assert await repository.get(future.id, include_unpublished=True) is not None
+    assert await repository.get(expired.id, include_unpublished=True) is not None
+
+    rest = await repository.delete_many(filters=bulk)
+    assert {hero.id for hero in rest} == {future.id, expired.id}
+    assert archived.id not in {hero.id for hero in rest}
+    assert await repository.delete_many(filters=bulk, include_unpublished=True) == []

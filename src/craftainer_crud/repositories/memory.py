@@ -393,17 +393,21 @@ class InMemoryRepository[ModelT: IdentifiedBase]:
             instance.updated_at = now
         return instances
 
-    async def delete_many(self, *, filters: Sequence[FilterClause]) -> Sequence[ModelT]:
+    async def delete_many(
+        self, *, filters: Sequence[FilterClause], include_unpublished: bool = True
+    ) -> Sequence[ModelT]:
         """Delete every record matching the filters; return the records that were deleted.
 
-        Excludes already-archived rows by default, same as update_many above -- a
-        not-yet-or-no-longer-published row is still reachable (see update_many's
-        own docstring for why).
+        Excludes already-archived rows, same as update_many above. A
+        not-yet-or-no-longer-published row is still reachable by default (see
+        update_many's own docstring for why); `include_unpublished=False` leaves it alone.
         """
         instances = [
             instance
             for instance in self._matching(filters)
-            if _is_visible(instance, include_archived=False, include_unpublished=True)
+            if _is_visible(
+                instance, include_archived=False, include_unpublished=include_unpublished
+            )
         ]
         for instance in instances:
             _raise_if_locked(instance, None)

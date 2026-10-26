@@ -374,16 +374,20 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         await self._reload(instances)
         return instances
 
-    async def delete_many(self, *, filters: Sequence[FilterClause]) -> Sequence[ModelT]:
+    async def delete_many(
+        self, *, filters: Sequence[FilterClause], include_unpublished: bool = True
+    ) -> Sequence[ModelT]:
         """Delete every record matching the filters; return the records that were deleted.
 
-        Excludes already-archived rows by default, same as update_many above -- a
-        not-yet-or-no-longer-published row is still reachable (see update_many's
-        own docstring for why).
+        Excludes already-archived rows, same as update_many above. A
+        not-yet-or-no-longer-published row is still reachable by default (see
+        update_many's own docstring for why); `include_unpublished=False` leaves it alone.
         """
         await self._guard_regex_timeout(filters)
         statement = self._matching(filters).where(
-            *self._visibility_clauses(include_archived=False, include_unpublished=True)
+            *self._visibility_clauses(
+                include_archived=False, include_unpublished=include_unpublished
+            )
         )
         result = await self._session.execute(statement)
         instances = result.scalars().all()

@@ -465,3 +465,37 @@ async def test_get_missing_returns_none_against_real_postgres() -> None:
     """get() of an id that doesn't exist returns None."""
     async with async_session_factory() as session:
         assert await SQLAlchemyRepository(session, Hero).get(2_000_000_000) is None
+
+
+async def test_delete_many_include_unpublished() -> None:
+    """delete_many() deletes scheduled rows by default; include_unpublished=False keeps them.
+
+    Drafts are not "unpublished" (only the publish_at/unpublish_at window is) and archived
+    rows are never touched. Runs inside one uncommitted session, same isolation as above.
+    """
+    async with async_session_factory() as session:
+        repository = SQLAlchemyRepository(session, Hero)
+        now = datetime.now(UTC).replace(tzinfo=None)
+
+        async def make(name: str, **extra: object) -> int:
+            hero = await repository.create(
+                {"name": f"BD1 {name}", "powers": ["A"], "owner_id": "tester", **extra}
+            )
+            return hero.id
+
+        draft = await make("Draft", is_draft=True)
+        live = await make("Live", is_draft=False)
+        future = await make("Future", publish_at=now + timedelta(days=1))
+        expired = await make("Expired", unpublish_at=now - timedelta(days=1))
+        archived = await make("Archived")
+        assert await repository.delete(archived)
+        bulk = [FilterClause("name", FilterOp.ICONTAINS, "BD1 ")]
+
+        kept = await repository.delete_many(filters=bulk, include_unpublished=False)
+        assert {hero.id for hero in kept} == {draft, live}
+        assert await repository.get(future, include_unpublished=True) is not None
+        assert await repository.get(expired, include_unpublished=True) is not None
+
+        rest = await repository.delete_many(filters=bulk)
+        assert {hero.id for hero in rest} == {future, expired}
+        assert await repository.delete_many(filters=bulk, include_unpublished=True) == []

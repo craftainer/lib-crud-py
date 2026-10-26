@@ -161,7 +161,9 @@ class _FakeWidgetRepository:
                 setattr(record, field, value)
         return matching
 
-    async def delete_many(self, *, filters: Sequence[FilterClause]) -> Sequence[_WidgetRecord]:
+    async def delete_many(
+        self, *, filters: Sequence[FilterClause], include_unpublished: bool = True
+    ) -> Sequence[_WidgetRecord]:
         """Delete every record matching the filters; return the records that were deleted."""
         matching = self._matching(filters)
         for record in matching:
