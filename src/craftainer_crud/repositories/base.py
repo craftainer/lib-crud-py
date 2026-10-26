@@ -96,10 +96,14 @@ class Repository[ModelT](Protocol):
         """
         ...
 
-    async def delete_many(self, *, filters: Sequence[FilterClause]) -> Sequence[ModelT]:
+    async def delete_many(
+        self, *, filters: Sequence[FilterClause], include_unpublished: bool = True
+    ) -> Sequence[ModelT]:
         """Delete every record matching the filters; return the records that were deleted.
 
-        See `delete`'s docstring for the Archivable/Lockable behavior.
+        See `delete`'s docstring for the Archivable/Lockable behavior. Unlike `list`,
+        `include_unpublished` defaults to True, so a not-yet-or-no-longer-published
+        (Schedulable) row is deleted unless the caller passes False.
         """
         ...
 

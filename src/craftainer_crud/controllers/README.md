@@ -100,7 +100,9 @@ JSON, XML, and (client-side, via generated JS) the web UI, not JSON-only):
 override the default Archivable/Schedulable exclusion (see
 `../repositories/README.md`), and `?only_archived=true` narrows a list to the
 archived rows (422 next to an explicit `include_archived=false`, and on `/stats`
-and the write routes; see `../../../docs/manifest.md`). `POST <prefix>/clone?id=` is always added
+and the write routes; see `../../../docs/manifest.md`). A bulk `DELETE` also reads
+`?include_unpublished=`, but defaults it to `true` (delete scheduled rows as before);
+`false` spares not-yet-or-no-longer-published rows (ADR 0008). `POST <prefix>/clone?id=` is always added
 (fully generic, no mixin needed): it builds `create_schema` from the
 fields it itself declares, read off the existing record, so a
 Draftable/Archivable/Schedulable model's server-assigned fields are never

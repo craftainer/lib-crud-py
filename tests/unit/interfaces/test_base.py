@@ -66,6 +66,7 @@ class _FakeWidgetRepository:
         self._records: dict[int, _WidgetRecord] = {}
         self._next_id = 1
         self.last_stats_filters: Sequence[FilterClause] = ()
+        self.last_delete_many_include_unpublished: bool | None = None
 
     def _matching(self, filters: Sequence[FilterClause]) -> list[_WidgetRecord]:
         def matches(record: _WidgetRecord, clause: FilterClause) -> bool:
@@ -161,8 +162,11 @@ class _FakeWidgetRepository:
                 setattr(record, field, value)
         return matching
 
-    async def delete_many(self, *, filters: Sequence[FilterClause]) -> Sequence[_WidgetRecord]:
+    async def delete_many(
+        self, *, filters: Sequence[FilterClause], include_unpublished: bool = True
+    ) -> Sequence[_WidgetRecord]:
         """Delete every record matching the filters; return the records that were deleted."""
+        self.last_delete_many_include_unpublished = include_unpublished
         matching = self._matching(filters)
         for record in matching:
             del self._records[record.id]
@@ -301,6 +305,16 @@ async def test_delete_many_removes_every_match(
     deleted = await crud.delete_many(filters=[FilterClause("label", FilterOp.ICONTAINS, "ap")])
     assert len(deleted) == 2
     assert await crud.count() == 1
+
+
+@pytest.mark.parametrize("flag", [None, True, False])
+async def test_delete_many_forwards_include_unpublished(flag: bool | None) -> None:
+    """delete_many() passes include_unpublished to the repository, defaulting to True."""
+    repository = _FakeWidgetRepository()
+    crud = CRUDInterface(schema=_Widget, repository=repository)
+    kwargs = {} if flag is None else {"include_unpublished": flag}
+    await crud.delete_many(filters=[FilterClause("label", FilterOp.ICONTAINS, "a")], **kwargs)
+    assert repository.last_delete_many_include_unpublished is (True if flag is None else flag)
 
 
 async def test_restore(crud: CRUDInterface[_Widget, _WidgetRecord]) -> None:

@@ -65,10 +65,13 @@ present:
   `publish_at`/`unpublish_at` window (computed from `datetime.now(UTC)`
   at query time, never a stored boolean) unless `include_unpublished=True`.
   Unlike `Archivable`, `update_many`/`delete_many` do *not* apply this
-  exclusion — a not-yet-or-no-longer-published row isn't deleted, just not
-  currently visible, and an editor must still be able to correct a
+  exclusion by default — a not-yet-or-no-longer-published row isn't deleted,
+  just not currently visible, and an editor must still be able to correct a
   scheduled record (single `update`/`delete` also stay reachable, for the
-  same reason) before it goes live.
+  same reason) before it goes live. `delete_many(include_unpublished=False)`
+  opts into the exclusion (default `True`, the reverse of `list`; see
+  `../../../docs/adrs/0008-bulk-delete-include-unpublished.md`); `update_many`
+  and `restore_many` take no such flag.
 - `Lockable`: see `base.py`'s `RecordLockedError`, above.
 
 A model without a given mixin is completely unaffected by all of the

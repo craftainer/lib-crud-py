@@ -153,3 +153,19 @@ async def test_delete_many_removes_every_match(
     )
     assert len(deleted) == 2
     assert await compat_crud.count() == 1
+
+
+@pytest.mark.parametrize("flag", [True, False])
+async def test_delete_many_forwards_include_unpublished(flag: bool) -> None:
+    """delete_many() passes include_unpublished through to the wrapped CRUDInterface."""
+    repository = _FakeWidgetRepository()
+    compat = CompatCRUD(
+        CRUDInterface(schema=_Widget, repository=repository),
+        to_legacy=_to_legacy,
+        from_legacy_create=_from_legacy_create,
+        from_legacy_update=_from_legacy_update,
+    )
+    await compat.delete_many(
+        filters=[FilterClause("label", FilterOp.ICONTAINS, "a")], include_unpublished=flag
+    )
+    assert repository.last_delete_many_include_unpublished is flag

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from craftainer_crud.config import get_config
 from craftainer_crud.controllers.crud_query import (
+    parse_bulk_delete_include_unpublished,
     parse_filters,
     parse_include_archived,
     parse_include_unpublished,
@@ -53,7 +54,11 @@ def _actor(request: Request) -> str:
 
 
 async def _check_bulk_action_size(
-    crud: CRUDLike[Any], filters: list[FilterClause], *, include_archived: bool = False
+    crud: CRUDLike[Any],
+    filters: list[FilterClause],
+    *,
+    include_archived: bool = False,
+    include_unpublished: bool = False,
 ) -> None:
     """Refuse a bulk update/delete whose filters match more than the configured cap.
 
@@ -61,7 +66,9 @@ async def _check_bulk_action_size(
     still match every row -- counting first (cheap relative to the mutation itself)
     catches that before any row is touched. `include_archived` is passed through to
     `count()` so a bulk *restore* (which only ever targets archived rows) is sized
-    correctly -- see resolve_restore below.
+    correctly -- see resolve_restore below. `include_unpublished` does the same for a
+    bulk delete, so the count matches the rows the delete will reach (the flag defaults to
+    False here, like `count`; resolve_delete passes its own parsed value).
 
     The raise below is `# pragma: no cover` for tests/e2e specifically: triggering it
     live would mean creating over bulk_action_max_matched (1000 by default) records
@@ -69,7 +76,9 @@ async def _check_bulk_action_size(
     test_crud_router.py already covers directly (with the cap monkeypatched low).
     """
     max_matched = get_config().bulk_action_max_matched
-    matched = await crud.count(filters=filters, include_archived=include_archived)
+    matched = await crud.count(
+        filters=filters, include_archived=include_archived, include_unpublished=include_unpublished
+    )
     if matched > max_matched:  # pragma: no cover -- see docstring
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
@@ -184,9 +193,12 @@ async def resolve_delete(
     filters = parse_filters(schema, request.query_params)
     if not filters:
         raise RequestValidationError(_NO_TARGET_ERROR)
-    await _check_bulk_action_size(crud, filters)
+    include_unpublished = parse_bulk_delete_include_unpublished(request.query_params)
+    await _check_bulk_action_size(crud, filters, include_unpublished=include_unpublished)
     try:
-        deleted_records = await crud.delete_many(filters=filters)
+        deleted_records = await crud.delete_many(
+            filters=filters, include_unpublished=include_unpublished
+        )
     except RecordLockedError as exc:
         raise HTTPException(status.HTTP_423_LOCKED, str(exc)) from exc
     ids = [record.id for record in deleted_records]

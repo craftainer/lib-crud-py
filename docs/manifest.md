@@ -142,7 +142,10 @@ capability, and the "missing required fields" list from the `422` body.
 own. `schedulable` means the model is Schedulable: it has `publish_at`/
 `unpublish_at`, and list and get routes hide records outside their publication
 window unless the request passes `?include_unpublished=true` (a reserved query
-key; a model that is not schedulable ignores it). `clone` and
+key; a model that is not schedulable ignores it). A bulk `DELETE` is the one
+route where the default is the other way round: it deletes those records unless
+the request passes `?include_unpublished=false`, so existing callers keep their
+behaviour; drafts (`is_draft`) are not unpublished records and are unaffected. `clone` and
 `conditional_requests` are on for every resource the Python server builds today;
 they are flags so another implementation can differ.
 
@@ -219,7 +222,7 @@ validation, a list of validation errors (`loc`, `msg`, `type`).
 | `PATCH base_path?id=` | `200`, the record, new `ETag` header | `404`; `412` stale `If-Match`; `423` record locked; `422` (including `?id=` with filters) |
 | `PATCH base_path?<filters>` (bulk) | `200` `{matched, ids}` | `400` no filters, or more than `bulk.max_matched` matches; `423` |
 | `DELETE base_path?id=` | `204` | `404`; `412`; `423`; `422` `?id=` with filters |
-| `DELETE base_path?<filters>` (bulk) | `200` `{matched, ids}` | as bulk `PATCH` |
+| `DELETE base_path?<filters>` (bulk) | `200` `{matched, ids}`; `?include_unpublished=false` leaves records outside their publication window alone (default `true`, unlike reads) | as bulk `PATCH`; `422` unparsable `include_unpublished` |
 | `POST paths.clone?id=` | `201`, the copy | `404`; `422` `?id=` with filters |
 | `POST paths.draft` | `201`, the draft | `422` |
 | `POST paths.publish?id=` | `200`, the record | `404`; `422` still missing required fields, or `?id=` with filters |

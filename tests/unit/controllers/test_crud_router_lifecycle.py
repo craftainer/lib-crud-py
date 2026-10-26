@@ -7,6 +7,7 @@ lifecycle in each format -- the routes a host app's end-to-end tests would other
 
 import re
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 import pytest
@@ -335,3 +336,57 @@ def test_web_form_blank_optional_field_is_omitted_and_invalid_form_is_422() -> N
     assert client.get("/heroes").json()[0]["power_level"] is None
     bad = client.post("/heroes/form", data={"name": "", "powers": ""}, follow_redirects=False)
     assert bad.status_code == 422
+
+
+@pytest.mark.parametrize("prefix", ["/heroes", "/heroes/xml"])
+@pytest.mark.parametrize(
+    ("params", "deleted"),
+    [
+        ({}, {"Draft", "Live", "Future"}),
+        ({"include_unpublished": "true"}, {"Draft", "Live", "Future"}),
+        ({"include_unpublished": "false"}, {"Draft", "Live"}),
+        ({"include_unpublished": "1"}, {"Draft", "Live", "Future"}),
+        ({"include_unpublished": "0"}, {"Draft", "Live"}),
+    ],
+)
+async def test_bulk_delete_include_unpublished(
+    prefix: str, params: dict[str, str], deleted: set[str]
+) -> None:
+    """Bulk DELETE reaches scheduled rows by default; include_unpublished=false spares them."""
+    now = datetime.now(UTC).replace(tzinfo=None)
+    ids = {}
+    for name, extra in (
+        ("Draft", {"is_draft": True}),
+        ("Live", {"is_draft": False}),
+        ("Future", {"publish_at": now + timedelta(days=1)}),
+        ("Archived", {}),
+    ):
+        hero = await _heroes.create({"name": name, "powers": ["A"], "owner_id": "tester", **extra})
+        ids[hero.id] = name
+    archived_id = next(i for i, n in ids.items() if n == "Archived")
+    assert client.delete("/heroes", params={"id": archived_id}).status_code == 204
+
+    response = client.delete(prefix, params={"owner_id": "tester", **params})
+    assert response.status_code == 200
+    if prefix.endswith("xml"):
+        got = {int(i) for i in re.findall(r"<ids>(\d+)</ids>", response.text)}
+        matched = int(re.search(r"<matched>(\d+)</matched>", response.text).group(1))  # type: ignore[union-attr]
+    else:
+        got = set(response.json()["ids"])
+        matched = response.json()["matched"]
+    assert {ids[i] for i in got} == deleted
+    assert matched == len(deleted)
+
+
+def test_bulk_delete_include_unpublished_rejects_bad_value() -> None:
+    """A non-boolean include_unpublished on a bulk DELETE is a 422 naming the key."""
+    response = client.delete("/heroes", params={"name": "x", "include_unpublished": "maybe"})
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["query", "include_unpublished"]
+
+
+def test_single_delete_ignores_include_unpublished() -> None:
+    """Single-record delete by id is unchanged by the flag."""
+    hero = client.post("/heroes", json={"name": "Solo", "powers": ["Flight"]}).json()
+    response = client.delete("/heroes", params={"id": hero["id"], "include_unpublished": "false"})
+    assert response.status_code == 204
