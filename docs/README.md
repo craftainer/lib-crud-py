@@ -9,6 +9,9 @@ AI-assisted coding workflow (`CLAUDE.md` at the repo root covers that).
   they connect, and the devcontainer vs. smoke-test stacks.
 - `system-design.md` — application-level view: layering, request flow,
   and key design decisions.
+- `manifest.md` — the CRUD manifest (contract between a CRUD server and
+  its SDKs and views): spec, discovery, versioning, conformance fixtures.
+  Machine-readable schema in `../schemas/crud-manifest/`.
 - `adrs/` — Architecture Decision Records: app-specific decisions and
   the reasoning behind them. See `adrs/README.md`.
 - `plans/` — working plans for in-progress or upcoming work. See

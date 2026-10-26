@@ -10,6 +10,12 @@ contract is [`schemas/crud-manifest/v1.json`](../schemas/crud-manifest/v1.json)
 reasons are in [ADR 0002](adrs/0002-crud-manifest-v1.md). Where this page and
 the schema disagree, the schema wins.
 
+The manifest is the source of truth for every client of a CRUD server: the
+Python and TypeScript SDKs build requests, caches and event subscriptions from
+it, and the React views render forms, filters, charts and actions from it. A
+client never hardcodes a resource's fields, route suffixes or identifier name;
+it reads them here (see "Consumers" below).
+
 ## Discovery
 
 ```
@@ -57,7 +63,7 @@ by `api_version`.
 | `api_version` | `v<N>` | The resource version, as in the route. |
 | `base_path` | path | Collection URL of the JSON API (the router's `/json` mount). Record routes hang off it: `GET base_path` lists, `?id=` addresses one record. |
 | `formats` | object | Format to root path: `json` (always, equal to `base_path`), and `xml`/`web` when mounted. Only `json` is described further here. |
-| `id_field` | string | Name of the identifier property in the read schema. |
+| `id_field` | string | Name of the identifier property in the read schema. Clients read a record's id from this property and never assume it is called `id`; `?id=` addresses one record by it. The id also appears in `fields` (it filters and sorts like any integer), but it is the record's key rather than something a person filters by, so the views leave it out of their filter UI. |
 | `schemas` | object | `read`, `create`, `update`: JSON Schemas, self-contained (internal `$defs`/`$ref`). `draft` is the schema a `/draft` body validates against, or `null`. |
 | `fields` | array | The **filterable and sortable** fields (see below). A record field that is not filterable (a list, a nullable `IXDTFDatetime`) appears only in `schemas.read`. |
 | `pagination` | object | `style: "offset"`, `skip_param`, `limit_param`, `sort_param`, `default_limit`, `max_limit`, `total`. List responses are bare arrays; `total` is `false` (no count is sent). A `limit` over `max_limit` is a validation error. |
@@ -119,6 +125,15 @@ rows by mistake. Every route that reads `include_archived` also rejects a malfor
 ignores it, as it does `include_archived`. Like the other reserved keys it is read
 from the raw query string and is not declared as an OpenAPI parameter.
 
+**Drafts.** A resource with `capabilities.draft_publish` accepts incomplete
+records. `POST paths.draft` validates the body against `schemas.draft` (typically
+the all-optional update schema) and stores the record with the server-assigned
+`is_draft` flag set. `POST paths.publish?id=` re-validates the stored record against
+`schemas.create`, answers `422` naming each field still missing, and on success
+clears `is_draft`. Without the capability, `schemas.draft` is `null` and neither
+path is present. A client shows a draft badge and a publish action from the
+capability, and the "missing required fields" list from the `422` body.
+
 ### Capabilities
 
 `bulk_update`, `bulk_delete`, `clone`, `draft_publish`, `archive_restore`,
@@ -139,7 +154,7 @@ they are flags so another implementation can differ.
 | `path` | The stream; equals `paths.events`. |
 | `resource` | The label inside each event's `resource` member. It carries **no version**: v1 and v2 of one model publish to, and share, one stream, so a client filters by `snapshot` shape or ignores the difference. |
 | `resume_param` | Query parameter that resumes a subscription (`subscriber_id`); the `Last-Event-ID` header is accepted as a fallback. |
-| `replay` | `persistent`: events missed while disconnected are replayed on resume (MQTT-backed). `none`: a reconnect starts fresh (in-memory). |
+| `replay` | `persistent`: events missed while disconnected are replayed on resume (MQTT-backed). `none`: a reconnect starts fresh (in-memory). Persistent replay lasts only as long as the broker keeps the subscriber's session: it is bounded by `MQTTConfig.session_ttl_seconds` (MQTT 5.0 session expiry, [ADR 0005](adrs/0005-durable-session-ttl.md)) or the broker's own expiry, and a subscriber that does not need replay uses a transient session ([ADR 0004](adrs/0004-transient-event-subscribers.md)). A client whose resume id has expired gets a fresh session and id in the first frame, so it should treat a changed id as "refetch", not as a gap-free resume. |
 | `keepalive_seconds` | Idle seconds before a `: keep-alive` comment frame; a finite number greater than 0 (the Python server rejects any other `sse_keepalive_seconds` at configuration time; clients should still guard against 0). |
 | `actions` | Actions the stream can carry: a subset of `create`, `update`, `delete`, `restore` (bulk actions emit one event per record). |
 
