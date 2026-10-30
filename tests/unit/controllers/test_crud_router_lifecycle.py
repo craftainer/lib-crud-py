@@ -21,9 +21,11 @@ from craftainer_crud.controllers.crud_router import (
 )
 from craftainer_crud.interfaces.base import CRUDInterface, OwnerScope, RepositoryRevisionSink
 from craftainer_crud.models.revision import Revision
+from craftainer_crud.repositories.filtering import FilterClause, FilterOp
 from craftainer_crud.repositories.memory import InMemoryRepository
 from tests.support.hero_model import Hero
 from tests.support.hero_views import HeroV2, HeroV2Create, HeroV2Update
+from tests.unit.conftest import CrudConfigOverride
 
 _heroes = InMemoryRepository(Hero)
 _revisions = InMemoryRepository(Revision)
@@ -390,3 +392,28 @@ def test_single_delete_ignores_include_unpublished() -> None:
     hero = client.post("/heroes", json={"name": "Solo", "powers": ["Flight"]}).json()
     response = client.delete("/heroes", params={"id": hero["id"], "include_unpublished": "false"})
     assert response.status_code == 204
+
+
+async def test_bulk_update_cap_counts_scheduled_rows(
+    override_crud_config: CrudConfigOverride,
+) -> None:
+    """The bulk PATCH cap counts the scheduled rows update_many reaches, not just published ones.
+
+    One published and two not-yet-published rows match; a cap of 2 sits above the published
+    count (1) but below what the update would touch (3), so the PATCH is refused untouched.
+    """
+    now = datetime.now(UTC).replace(tzinfo=None)
+    for name, extra in (
+        ("CL4 Live", {}),
+        ("CL4 Future A", {"publish_at": now + timedelta(days=1)}),
+        ("CL4 Future B", {"publish_at": now + timedelta(days=2)}),
+    ):
+        await _heroes.create({"name": name, "powers": ["A"], "owner_id": "tester", **extra})
+    override_crud_config(bulk_action_max_matched=2)
+
+    response = client.patch("/heroes", params={"name__icontains": "CL4 "}, json={"power_level": 9})
+    assert response.status_code == 400
+    touched = await _heroes.list(
+        filters=[FilterClause("name", FilterOp.ICONTAINS, "CL4 ")], include_unpublished=True
+    )
+    assert all(hero.power_level != 9 for hero in touched)

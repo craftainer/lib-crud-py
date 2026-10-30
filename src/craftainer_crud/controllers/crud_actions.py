@@ -154,7 +154,8 @@ async def resolve_update(
     filters = parse_filters(schema, request.query_params)
     if not filters:
         raise RequestValidationError(_NO_TARGET_ERROR)
-    await _check_bulk_action_size(crud, filters)
+    # update_many reaches scheduled (not-yet-or-no-longer-published) rows, so count them too.
+    await _check_bulk_action_size(crud, filters, include_unpublished=True)
     try:
         updated_records = await crud.update_many(filters=filters, data=data)
     except RecordLockedError as exc:
