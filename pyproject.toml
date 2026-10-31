@@ -16,7 +16,7 @@ dependencies = [
     "python-multipart>=0.0.32,<1",
     # Capped below 2.1: the repository is type-checked (mypy --strict) against 2.0's
     # Select/Row typing, which 2.1 changes; widen once it is verified on 2.1.
-    "sqlalchemy[asyncio]>=2.0.54,<2.1",
+    "sqlalchemy[asyncio]>=2.1.6,<2.2",
 ]
 
 [project.optional-dependencies]
@@ -29,17 +29,17 @@ xml = ["defusedxml>=0.7.1,<1"]
 [dependency-groups]
 # Installed by a plain `uv sync` (uv's default group).
 dev = [
-    "ruff==0.16.8",
-    "mypy==2.3.1",
-    "pytest==9.1.1",
+    "ruff==0.17.3",
+    "mypy==2.4.1",
+    "pytest==9.2.0",
     "pytest-cov==7.1.0",
     "pytest-benchmark==5.3.0",
-    "pytest-codspeed==5.0.3",
+    "pytest-codspeed==5.0.4",
     "import-linter==2.15",
     "pip-audit==2.10.1",
-    "pytest-asyncio==1.4.0",
-    "httpx2==2.13.0",
-    "asyncpg==0.31.0",
+    "pytest-asyncio==1.4.1",
+    "httpx2==2.16.0",
+    "asyncpg==0.32.0",
     # The extras, so the unit tests exercise the optional code paths.
     "aiomqtt==2.5.1",
     "paho-mqtt==2.1.0",
