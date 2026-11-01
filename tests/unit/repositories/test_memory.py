@@ -345,7 +345,9 @@ async def test_stats_time_series_buckets_by_created_at(
 ) -> None:
     """stats(bucket=...) groups records into UTC calendar buckets of the given width."""
     heroes = await repository.list()
-    now = datetime.now(UTC).replace(tzinfo=None, hour=12, minute=0, second=0, microsecond=0)
+    # Fixed mid-month Wednesday: offsets 0..2 stay inside one month and one ISO week
+    # (Mon 11th - Wed 13th) whatever day the suite runs on.
+    now = datetime(2024, 3, 13, 12, 0, 0)
     for offset, hero in enumerate(heroes):
         repository._records[hero.id].created_at = now - timedelta(days=offset)
 
