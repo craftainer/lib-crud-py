@@ -876,12 +876,12 @@ def _events_visibility(crud_dependency: Any, scope_dependency: Any) -> Callable[
     """
     if scope_dependency is not None:
 
-        async def visible_for_scope(scope: scope_dependency) -> Callable[[Mapping[str, Any]], bool]:  # type: ignore[valid-type]
+        async def visible_for_scope(scope: scope_dependency) -> Callable[[Mapping[str, Any]], bool]:
             return partial(scope_event_visible, scope)
 
         return visible_for_scope
 
-    async def visible_for_crud(crud: crud_dependency) -> Callable[[Mapping[str, Any]], bool]:  # type: ignore[valid-type]
+    async def visible_for_crud(crud: crud_dependency) -> Callable[[Mapping[str, Any]], bool]:
         return partial(event_visible, crud)
 
     return visible_for_crud

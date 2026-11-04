@@ -1181,9 +1181,10 @@ class _ScopedEventSource:
     """EventSource replaying _SCOPED_EVENTS once."""
 
     async def subscribe(
-        self, subscriber_id: str | None
+        self, subscriber_id: str | None, *, durable: bool = True
     ) -> tuple[str, EventIterator[dict[str, Any]]]:
         """Return a finite iterator over the canned events."""
+        del durable
         return subscriber_id or "stub-subscriber", _scoped_events()
 
 
@@ -1192,7 +1193,7 @@ def _scoped_events_client(*, with_scope_dependency: bool) -> tuple[TestClient, l
     resolved: list[str] = []
     scope = OwnerScope("owner", "alice")
 
-    def crud() -> Any:
+    def crud() -> CRUDInterface[_Gadget, _GadgetRecord]:
         resolved.append("crud")
         return CRUDInterface(schema=_Gadget, repository=_FakeGadgetRepository(), owner=scope)
 
