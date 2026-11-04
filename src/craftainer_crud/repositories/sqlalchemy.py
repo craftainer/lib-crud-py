@@ -175,7 +175,7 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
                 case FilterOp.IN:
                     clauses.append(column.in_(clause.value))
                 case FilterOp.CONTAINS:  # pragma: no cover -- see module docstring
-                    clauses.append(column.contains(clause.value, autoescape=True))
+                    clauses.append(column.contains(str(clause.value), autoescape=True))
                 case FilterOp.ICONTAINS:
                     clauses.append(column.ilike(f"%{_escape_like(clause.value)}%", escape="\\"))
                 case FilterOp.REGEX:
