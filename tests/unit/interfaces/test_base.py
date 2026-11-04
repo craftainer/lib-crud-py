@@ -5,7 +5,9 @@ to Hero/SQLAlchemy at all, to prove the CRUD interface is genuinely generic.
 """
 
 import asyncio
+import json
 import ssl
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
@@ -21,8 +23,10 @@ from craftainer_crud.interfaces.base import (
     MQTTEventSource,
     OwnerScope,
     _background_tasks,
+    _event_envelope,
     _mqtt_connection_kwargs,
     _schedule_disconnect,
+    event_visible,
 )
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_crud.repositories.stats import ResourceStats, TimeBucket
@@ -561,12 +565,24 @@ class _FakeEventSink:
         self.calls: list[dict[str, Any]] = []
 
     async def publish(
-        self, *, resource: str, record_id: int, action: str, snapshot: dict[str, Any]
+        self,
+        *,
+        resource: str,
+        record_id: int,
+        action: str,
+        snapshot: dict[str, Any],
+        owner: object = None,
     ) -> None:
-        """Record this call's arguments."""
-        self.calls.append(
-            {"resource": resource, "record_id": record_id, "action": action, "snapshot": snapshot}
-        )
+        """Record this call (`owner` only when given, as CRUDInterface passes it)."""
+        call = {
+            "resource": resource,
+            "record_id": record_id,
+            "action": action,
+            "snapshot": snapshot,
+        }
+        if owner is not None:
+            call["owner"] = owner
+        self.calls.append(call)
 
 
 @pytest.fixture
@@ -893,3 +909,77 @@ async def test_unscoped_in_memory_event_sink_still_broadcasts_every_resource() -
     await sink.publish(resource="villain", record_id=9, action="create", snapshot={"id": 9})
 
     assert (await events.__anext__())["resource"] == "villain"
+
+
+# --- OwnerScope hardening: fail-closed value, owner field never updatable -----
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_owner_scope_without_a_value_fails_closed(value: object) -> None:
+    """A missing owner value must raise, never become `owner_id IS NULL` / an empty group."""
+    with pytest.raises(ValueError, match="non-empty owner value"):
+        OwnerScope("owner_id", value)
+
+
+class _WidgetOwnerUpdate(BaseModel):
+    """An update view that (wrongly) exposes the owner column."""
+
+    label: str | None = None
+    owner_id: str | None = None
+
+
+async def test_owner_update_cannot_reassign_the_owner(
+    alice_crud: CRUDInterface[_Widget, _WidgetRecord],
+    repository: _FakeWidgetRepository,
+) -> None:
+    """update() and update_many() drop the owner field from the data."""
+    created = await alice_crud.create(_WidgetCreate(label="a"))
+    updated = await alice_crud.update(created.id, _WidgetOwnerUpdate(label="b", owner_id="bob"))
+    assert updated is not None
+    assert (updated.label, updated.owner_id) == ("b", "alice")
+    many = await alice_crud.update_many(
+        filters=[FilterClause("id", FilterOp.EQ, created.id)],
+        data=_WidgetOwnerUpdate(label="c", owner_id="bob"),
+    )
+    assert [(w.label, w.owner_id) for w in many] == [("c", "alice")]
+    assert repository._records[created.id].owner_id == "alice"
+
+
+async def test_events_carry_the_owner_only_for_a_scoped_resource(
+    event_sink: _FakeEventSink,
+) -> None:
+    """A scoped CRUDInterface passes `owner` to the sink; an owner-less one does not."""
+    scoped = CRUDInterface(
+        schema=_Widget,
+        repository=_FakeWidgetRepository(),
+        owner=OwnerScope("owner_id", "alice"),
+        events=event_sink,
+        resource="widget",
+    )
+    await scoped.create(_WidgetCreate(label="a"))
+    assert event_sink.calls[0]["owner"] == "alice"
+
+
+def test_event_envelope_owner_is_json_safe_and_visibility_fails_closed() -> None:
+    """The envelope stringifies non-JSON owners; event_visible compares that form."""
+    owner = uuid.uuid4()
+    envelope = _event_envelope(resource="r", record_id=1, action="create", snapshot={}, owner=owner)
+    assert envelope["owner"] == str(owner)
+    json.dumps(envelope)
+    assert _event_envelope(resource="r", record_id=1, action="x", snapshot={})["owner"] is None
+
+    scoped = CRUDInterface(
+        schema=_Widget, repository=_FakeWidgetRepository(), owner=OwnerScope("owner_id", owner)
+    )
+    assert event_visible(scoped, envelope)
+    assert not event_visible(scoped, {**envelope, "owner": "someone-else"})
+    assert not event_visible(scoped, {k: v for k, v in envelope.items() if k != "owner"})
+
+    open_reads = CRUDInterface(
+        schema=_Widget,
+        repository=_FakeWidgetRepository(),
+        owner=OwnerScope("owner_id", "x", read_scoped=False),
+    )
+    ownerless = CRUDInterface(schema=_Widget, repository=_FakeWidgetRepository())
+    assert event_visible(open_reads, envelope)
+    assert event_visible(ownerless, envelope)

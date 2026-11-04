@@ -71,6 +71,19 @@ CRUD class, only a model, a view, and a router that wires the two through
   `app.crud_1.heroes.heroes_v2.get_hero_crud` for the worked example, and
   `craftainer_crud.controllers.crud_router`'s `/revisions` route for reading it back.
 
+  Owner scoping and events ([ADR 0009](../../../docs/adrs/0009-owner-scoped-revisions-and-events.md)):
+  `OwnerScope(field, value)` raises `ValueError` for `value=None` or `""`
+  (fail closed; it never filters `IS NULL`), and `update`/`update_many` drop
+  `field` from the update data, so ownership is set on create only. An
+  `EventSink.publish` receives `owner=` (the scope's value) and the envelope
+  gains an `owner` member (non-JSON values as `str()`) for broker-side
+  routing and filtering only: `/events` strips it from the SSE frame.
+  A host's dependency must reject sub-less tokens with 401/403 before
+  constructing the `OwnerScope`, which raises on a missing value. `CRUDInterface` passes
+  `owner` only when it has a scope, so a custom sink for an owner-less
+  resource may still omit the parameter. `event_visible(crud, event)` (or `scope_event_visible(scope, event)`, given only the scope) is the
+  per-subscriber rule `GET <prefix>/events` applies.
+
   `restore`/`restore_many` mirror `delete`/`delete_many`'s own shape
   (id-or-filters, single-or-bulk), clearing `archived_at` instead of
   deleting — see `../repositories/README.md`'s `Archivable` paragraph.

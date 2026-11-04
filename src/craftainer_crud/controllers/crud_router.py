@@ -22,11 +22,12 @@ import contextlib
 import hashlib
 import json
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
+from functools import partial
 from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, ValidationError
@@ -42,6 +43,7 @@ from craftainer_crud.controllers.crud_actions import (
 from craftainer_crud.controllers.crud_query import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
+    MAX_SKIP,
     FieldFilterInfo,
     describe_fields,
     parse_include_archived,
@@ -49,7 +51,7 @@ from craftainer_crud.controllers.crud_query import (
     reject_filters_with_id,
     reject_only_archived,
 )
-from craftainer_crud.interfaces.base import EventIterator
+from craftainer_crud.interfaces.base import EventIterator, event_visible, scope_event_visible
 from craftainer_crud.interfaces.cache import StatsCache
 from craftainer_crud.manifest.registry import ManifestOptions, RegisteredResource
 from craftainer_crud.models.mixins import Schedulable
@@ -542,6 +544,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     revision_repository_dependency: Any = None,  # Annotated[Repository[Revision], Depends(...)]
     resource: str | None = None,
     event_source_dependency: Any = None,  # Annotated[EventSource, Depends(...)]
+    scope_dependency: Any = None,  # Annotated[OwnerScope | None, Depends(...)]
     stats_enabled: bool = False,
     bulk_rate_limit: RateLimit | None = None,
     stats_cache: StatsCache | None = None,
@@ -587,9 +590,9 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
 
     `revision_repository_dependency` + `resource` together add
     `GET <prefix>/revisions?id=`, a plain query against the shared Revision
-    table (see craftainer_crud.models.revision) for that record's history, newest first --
-    not routed through `crud_dependency` at all, since it reads a different
-    model entirely.
+    table (see craftainer_crud.models.revision) for that record's history, newest first.
+    The record is resolved through `crud_dependency` first, so an owner scope applies and an
+    invisible record is the same 404 as `GET <prefix>?id=` (ADR 0009).
 
     `event_source_dependency`, if given, adds `GET <prefix>/events`: a
     Server-Sent Events stream of this resource's create/update/update_many/
@@ -642,8 +645,8 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
         request: Request,
         response: Response,
         id: int | None = None,  # noqa: A002
-        skip: int = 0,
-        limit: Annotated[int, Query(le=MAX_LIMIT)] = DEFAULT_LIMIT,
+        skip: Annotated[int, Query(ge=0, le=MAX_SKIP)] = 0,
+        limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     ) -> schema | list[schema]:  # type: ignore[valid-type]
         result = await resolve_list_or_get(
             crud, schema, request, id=id, skip=skip, limit=limit, not_found=not_found
@@ -757,10 +760,12 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
         @router.get("/revisions", dependencies=[read_roles])
         async def list_revisions(
             repository: revision_repository_dependency,
+            crud: crud_dependency,
             request: Request,
             id: int,  # noqa: A002
         ) -> list[RevisionView]:
             reject_filters_with_id(request.query_params)
+            await _require_visible_record(crud, id, not_found)
             records = await repository.list(
                 filters=[
                     FilterClause("resource", FilterOp.EQ, resource),
@@ -772,17 +777,20 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
             return [RevisionView.model_validate(record) for record in records]
 
     if event_source_dependency is not None:
+        visibility = _events_visibility(crud_dependency, scope_dependency)
 
         @router.get("/events", dependencies=[read_roles])
         async def stream_events(
             source: event_source_dependency,
+            visible: Annotated[Callable[[Mapping[str, Any]], bool], Depends(visibility)],
             request: Request,
             subscriber_id: str | None = None,
         ) -> StreamingResponse:
             resolved_subscriber_id = subscriber_id or request.headers.get("last-event-id")
             resolved_id, events = await source.subscribe(resolved_subscriber_id)
             return StreamingResponse(
-                _sse_events(request, resolved_id, events), media_type="text/event-stream"
+                _sse_events(request, resolved_id, events, visible=visible),
+                media_type="text/event-stream",
             )
 
     if stats_enabled:
@@ -846,8 +854,44 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     return router
 
 
+async def _require_visible_record(crud: Any, record_id: int, not_found: str) -> None:
+    """404 unless the caller can read the record through `crud.get` (owner scope included).
+
+    `/revisions` reads the shared revision table directly, so without this check it
+    would hand out another owner's history by id. Archived and unpublished records
+    stay resolvable (their history is the point); a hard-deleted record no longer is.
+    """
+    record = await crud.get(record_id, include_archived=True, include_unpublished=True)
+    if record is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
+
+
+def _events_visibility(crud_dependency: Any, scope_dependency: Any) -> Callable[..., Any]:
+    """Build the dependency that yields `/events`'s per-subscriber visibility predicate.
+
+    With `scope_dependency` it resolves only that (the owner scope, e.g. from the token),
+    so `crud_dependency` -- and any DB session it yields -- is never resolved for the
+    stream. Without it, `/events` falls back to `crud_dependency` and holds it open for
+    the stream's life (ADR 0009).
+    """
+    if scope_dependency is not None:
+
+        async def visible_for_scope(scope: scope_dependency) -> Callable[[Mapping[str, Any]], bool]:
+            return partial(scope_event_visible, scope)
+
+        return visible_for_scope
+
+    async def visible_for_crud(crud: crud_dependency) -> Callable[[Mapping[str, Any]], bool]:
+        return partial(event_visible, crud)
+
+    return visible_for_crud
+
+
 async def _sse_events(
-    request: Request, subscriber_id: str, events: EventIterator[dict[str, Any]]
+    request: Request,
+    subscriber_id: str,
+    events: EventIterator[dict[str, Any]],
+    visible: Callable[[Mapping[str, Any]], bool] = lambda _event: True,
 ) -> AsyncGenerator[str]:
     """Render one EventSource subscription as an SSE byte stream.
 
@@ -859,7 +903,9 @@ async def _sse_events(
     purely informational and isn't itself used to resume a gap. A `: keep-alive`
     comment fills any gap longer than `Settings.sse_keepalive_seconds` so intermediary
     proxies/load balancers don't time out an idle connection; the stream ends as soon
-    as `request.is_disconnected()` reports the client is gone.
+    as `request.is_disconnected()` reports the client is gone. An event `visible`
+    rejects (another owner's, for a read-scoped caller) is skipped before it is
+    framed or numbered, so this subscriber never receives it.
 
     Uses `asyncio.wait` (checking, not consuming, a still-pending task) rather than
     `asyncio.wait_for` around `events.__anext__()` -- `wait_for` cancels its inner
@@ -911,7 +957,12 @@ async def _sse_events(
             # test_sse_events_yields_subscriber_id_frame_then_each_event.
             except StopAsyncIteration:  # pragma: no cover
                 return
-            yield f"id: {sequence}\ndata: {json.dumps(event)}\n\n"
+            if not visible(event):
+                continue
+            # `owner` is for broker-side routing and `visible` only (ADR 0009); it
+            # never reaches a subscriber, who may read other users' records.
+            frame = {key: value for key, value in event.items() if key != "owner"}
+            yield f"id: {sequence}\ndata: {json.dumps(frame)}\n\n"
             sequence += 1
     finally:
         if pending is not None:
@@ -947,6 +998,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
     revision_repository_dependency: Any = None,  # Annotated[Repository[Revision], Depends(...)]
     resource: str | None = None,
     event_source_dependency: Any = None,  # Annotated[EventSource, Depends(...)]
+    scope_dependency: Any = None,  # Annotated[OwnerScope | None, Depends(...)]
     stats_enabled: bool = False,
     bulk_rate_limit: RateLimit | None = None,
     stats_cache: StatsCache | None = None,
@@ -976,8 +1028,8 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
         request: Request,
         response: Response,
         id: int | None = None,  # noqa: A002
-        skip: int = 0,
-        limit: Annotated[int, Query(le=MAX_LIMIT)] = DEFAULT_LIMIT,
+        skip: Annotated[int, Query(ge=0, le=MAX_SKIP)] = 0,
+        limit: Annotated[int, Query(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT,
     ) -> Response:
         result = await resolve_list_or_get(
             crud, schema, request, id=id, skip=skip, limit=limit, not_found=not_found
@@ -1132,11 +1184,13 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
         @router.get("/revisions", dependencies=[read_roles])
         async def list_revisions_xml(
             repository: revision_repository_dependency,
+            crud: crud_dependency,
             response: Response,
             request: Request,
             id: int,  # noqa: A002
         ) -> Response:
             reject_filters_with_id(request.query_params)
+            await _require_visible_record(crud, id, not_found)
             records = await repository.list(
                 filters=[
                     FilterClause("resource", FilterOp.EQ, resource),
@@ -1153,17 +1207,20 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
             )
 
     if event_source_dependency is not None:
+        visibility = _events_visibility(crud_dependency, scope_dependency)
 
         @router.get("/events", dependencies=[read_roles])
         async def stream_events_xml(
             source: event_source_dependency,
+            visible: Annotated[Callable[[Mapping[str, Any]], bool], Depends(visibility)],
             request: Request,
             subscriber_id: str | None = None,
         ) -> StreamingResponse:
             resolved_subscriber_id = subscriber_id or request.headers.get("last-event-id")
             resolved_id, events = await source.subscribe(resolved_subscriber_id)
             return StreamingResponse(
-                _sse_events(request, resolved_id, events), media_type="text/event-stream"
+                _sse_events(request, resolved_id, events, visible=visible),
+                media_type="text/event-stream",
             )
 
     if stats_enabled:
@@ -1397,6 +1454,7 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
     archivable: bool = False,
     revision_repository_dependency: Any = None,  # Annotated[Repository[Revision], Depends(...)]
     event_source_dependency: Any = None,  # Annotated[EventSource, Depends(...)]
+    scope_dependency: Any = None,  # Annotated[OwnerScope | None, Depends(...)]
     stats_enabled: bool = False,
     bulk_rate_limit: RateLimit | None = None,
     stats_cache: StatsCache | None = None,
@@ -1476,6 +1534,7 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
             revision_repository_dependency=revision_repository_dependency,
             resource=resource,
             event_source_dependency=event_source_dependency,
+            scope_dependency=scope_dependency,
             stats_enabled=stats_enabled,
             bulk_rate_limit=bulk_rate_limit,
             stats_cache=stats_cache,
@@ -1501,6 +1560,7 @@ def build_resource_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseM
             revision_repository_dependency=revision_repository_dependency,
             resource=resource,
             event_source_dependency=event_source_dependency,
+            scope_dependency=scope_dependency,
             stats_enabled=stats_enabled,
             bulk_rate_limit=bulk_rate_limit,
             stats_cache=stats_cache,

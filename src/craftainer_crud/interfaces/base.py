@@ -25,7 +25,7 @@ import json
 import logging
 import ssl
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -105,11 +105,23 @@ class EventSink(Protocol):
     """
 
     async def publish(
-        self, *, resource: str, record_id: int, action: str, snapshot: dict[str, Any]
+        self,
+        *,
+        resource: str,
+        record_id: int,
+        action: str,
+        snapshot: dict[str, Any],
+        owner: object = None,
     ) -> None:
         """Publish one event for `resource`/`record_id` -- delivery semantics are the
         concrete adapter's own (see MQTTEventSink: at-least-once at QoS 1; InMemoryEventSink:
-        best-effort, no delivery guarantee)."""
+        best-effort, no delivery guarantee).
+
+        `owner` is the record's owner-scope value; the adapter carries it in the
+        envelope's `owner` field so `GET <prefix>/events` can filter per subscriber.
+        `CRUDInterface` passes it only when it has an `OwnerScope`, so a custom sink
+        for an owner-less resource may still omit the parameter.
+        """
         ...
 
 
@@ -170,15 +182,32 @@ class EventSource(Protocol):
         ...
 
 
+def wire_owner(value: object) -> str | int | float | bool | None:
+    """Return the JSON-safe form of an owner value, as carried in the event envelope.
+
+    Strings, numbers and booleans pass through unchanged; anything else (a UUID, say)
+    becomes its `str()`, so the publisher and the per-subscriber filter
+    (`event_visible`) compare the same representation on both sides of a broker.
+    """
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    return str(value)
+
+
 def _event_envelope(
-    *, resource: str, record_id: int, action: str, snapshot: dict[str, Any]
+    *, resource: str, record_id: int, action: str, snapshot: dict[str, Any], owner: object = None
 ) -> dict[str, Any]:
-    """Build the JSON-safe event envelope shared by every EventSink/EventSource adapter."""
+    """Build the JSON-safe event envelope shared by every EventSink/EventSource adapter.
+
+    `owner` is the owning scope's value for the record (`OwnerScope.value`), or None
+    for a resource without an owner scope; `event_visible` filters on it.
+    """
     return {
         "resource": resource,
         "record_id": record_id,
         "action": action,
         "snapshot": snapshot,
+        "owner": wire_owner(owner),
         "timestamp": datetime.now(UTC).isoformat(),
     }
 
@@ -301,11 +330,21 @@ class MQTTEventSink:
     use_tls: bool = False
 
     async def publish(
-        self, *, resource: str, record_id: int, action: str, snapshot: dict[str, Any]
+        self,
+        *,
+        resource: str,
+        record_id: int,
+        action: str,
+        snapshot: dict[str, Any],
+        owner: object = None,
     ) -> None:
         """Publish one event to `crud-events/<resource>` at QoS 1."""
         envelope = _event_envelope(
-            resource=resource, record_id=record_id, action=action, snapshot=snapshot
+            resource=resource,
+            record_id=record_id,
+            action=action,
+            snapshot=snapshot,
+            owner=owner,
         )
         import aiomqtt  # noqa: PLC0415 -- optional `[mqtt]` extra, only needed here
 
@@ -551,7 +590,13 @@ class InMemoryEventSink:
         self._queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
 
     async def publish(
-        self, *, resource: str, record_id: int, action: str, snapshot: dict[str, Any]
+        self,
+        *,
+        resource: str,
+        record_id: int,
+        action: str,
+        snapshot: dict[str, Any],
+        owner: object = None,
     ) -> None:
         """Push one event onto every currently-subscribed queue, unless this sink is
         scoped to a different resource, in which case the event is dropped.
@@ -559,7 +604,11 @@ class InMemoryEventSink:
         if self._resource is not None and resource != self._resource:
             return
         envelope = _event_envelope(
-            resource=resource, record_id=record_id, action=action, snapshot=snapshot
+            resource=resource,
+            record_id=record_id,
+            action=action,
+            snapshot=snapshot,
+            owner=owner,
         )
         for queue in list(self._queues.values()):
             queue.put_nowait(envelope)
@@ -630,9 +679,47 @@ class OwnerScope:
     value: Any
     read_scoped: bool = True
 
+    def __post_init__(self) -> None:
+        """Refuse a scope with no usable owner value instead of matching unowned rows.
+
+        `value=None` would filter `field IS NULL` (every unowned/legacy row) and stamp
+        NULL on create; `""` would group every caller without an identity. Both fail
+        closed: building the scope raises, so the request errors instead of widening.
+        """
+        if self.value is None or self.value == "":
+            raise ValueError(
+                f"OwnerScope({self.field!r}) needs a non-empty owner value; got {self.value!r}"
+                " (does the caller's token lack a subject claim?)"
+            )
+
     def filter(self) -> FilterClause:
         """Return the equality FilterClause this scope adds to every query."""
         return FilterClause(self.field, FilterOp.EQ, self.value)
+
+
+def event_visible(crud: object, event: Mapping[str, Any]) -> bool:
+    """Return whether the caller behind `crud` may receive `event` (the `read_scoped` rule).
+
+    Mirrors `CRUDInterface.get`'s visibility: a CRUD without an owner scope, or with
+    `read_scoped=False`, sees every event; a read-scoped one sees only events whose
+    envelope `owner` equals its own scope value. An event with no `owner` (a publisher
+    that predates the field, or one injected on the topic) is dropped for a read-scoped
+    caller -- fail closed. A `CompatCRUD` is looked through to the interface it wraps.
+    """
+    inner = getattr(crud, "_crud", crud)
+    return scope_event_visible(getattr(inner, "_owner", None), event)
+
+
+def scope_event_visible(owner: OwnerScope | None, event: Mapping[str, Any]) -> bool:
+    """Return whether a caller holding `owner` (None: unscoped) may receive `event`.
+
+    The rule `event_visible` applies, for a host whose `scope_dependency` yields just the
+    scope (no CRUD, so no DB session held for the stream's life).
+    """
+    if owner is None or not owner.read_scoped:
+        return True
+    event_owner = event.get("owner")
+    return event_owner is not None and event_owner == wire_owner(owner.value)
 
 
 class CRUDLike[SchemaT: BaseModel](Protocol):
@@ -777,12 +864,28 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
         """
         if self._events is None:
             return  # pragma: no cover -- see module docstring
+        # `owner` is passed only for a scoped resource, so a custom EventSink written
+        # before the parameter existed keeps working for an owner-less one.
+        owner_kwargs = {} if self._owner is None else {"owner": self._owner.value}
         await self._events.publish(
             resource=self._resource or "",
             record_id=record_id,
             action=action,
             snapshot=snapshot.model_dump(mode="json"),
+            **owner_kwargs,
         )
+
+    def _update_values(self, data: BaseModel) -> dict[str, Any]:
+        """Return the update's set fields, minus the owner field.
+
+        Ownership is stamped on create only; an update that names the owner field
+        (a host view that exposes it) must not hand the record to another owner, so
+        the field is dropped here rather than trusted from the view.
+        """
+        values = data.model_dump(exclude_unset=True)
+        if self._owner is not None:
+            values.pop(self._owner.field, None)
+        return values
 
     def _scoped(self, filters: Sequence[FilterClause]) -> Sequence[FilterClause]:
         """Add this interface's owner filter (if any) to a write operation's filters.
@@ -910,14 +1013,14 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
     async def update(self, record_id: int, data: BaseModel) -> SchemaT | None:
         """Apply the given input view's set fields to the record, if it exists."""
         if self._owner is None:  # pragma: no cover -- see module docstring
-            instance = await self._repository.update(record_id, data.model_dump(exclude_unset=True))
+            instance = await self._repository.update(record_id, self._update_values(data))
             if instance is None:
                 return None
             result = self._schema.model_validate(instance)
         else:
             updated = await self._repository.update_many(
                 filters=self._scoped(_id_filter(record_id)),
-                data=data.model_dump(exclude_unset=True),
+                data=self._update_values(data),
             )
             if not updated:
                 return None
@@ -957,7 +1060,7 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
     ) -> Sequence[SchemaT]:
         """Apply the given input view's set fields to every matching record; return them."""
         instances = await self._repository.update_many(
-            filters=self._scoped(filters), data=data.model_dump(exclude_unset=True)
+            filters=self._scoped(filters), data=self._update_values(data)
         )
         results = [self._schema.model_validate(instance) for instance in instances]
         for result in results:
