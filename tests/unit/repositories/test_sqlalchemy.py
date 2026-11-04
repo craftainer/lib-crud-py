@@ -30,6 +30,15 @@ def test_order_by_rejects_unknown_sort_field() -> None:
         repository._order_by([SortClause("not_a_real_field")])
 
 
+def test_icontains_escapes_like_wildcards() -> None:
+    """`%`, `_` and `\\` in an icontains value match literally, not as LIKE wildcards."""
+    repository = SQLAlchemyRepository(session=None, model=Hero)  # type: ignore[arg-type]
+    (clause,) = repository._where_clauses([FilterClause("name", FilterOp.ICONTAINS, "50%_a\\")])
+    compiled = clause.compile()
+    assert "ESCAPE" in str(compiled)
+    assert list(compiled.params.values()) == ["%50\\%\\_a\\\\%"]
+
+
 class _FakeInstance:
     """Stand-in for a mapped row: only `id` matters to `_reload`."""
 

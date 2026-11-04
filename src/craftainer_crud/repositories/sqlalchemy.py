@@ -73,6 +73,11 @@ from craftainer_crud.repositories.stats import (
 )
 
 
+def _escape_like(value: object) -> str:
+    """Escape `\\`, `%` and `_` so a user's text matches literally inside a LIKE pattern."""
+    return str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def _as_float(value: int | float | Decimal | None) -> float | None:
     """Coerce a SQL aggregate result (int/float/Decimal/None) to a plain float."""
     return None if value is None else float(value)
@@ -170,9 +175,9 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
                 case FilterOp.IN:
                     clauses.append(column.in_(clause.value))
                 case FilterOp.CONTAINS:  # pragma: no cover -- see module docstring
-                    clauses.append(column.contains(clause.value))
+                    clauses.append(column.contains(clause.value, autoescape=True))
                 case FilterOp.ICONTAINS:
-                    clauses.append(column.ilike(f"%{clause.value}%"))
+                    clauses.append(column.ilike(f"%{_escape_like(clause.value)}%", escape="\\"))
                 case FilterOp.REGEX:
                     clauses.append(column.op("~")(clause.value))
                 case _:  # pragma: no cover -- FilterOp is exhaustive above

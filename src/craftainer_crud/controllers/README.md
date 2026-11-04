@@ -116,15 +116,20 @@ single-or-bulk shape (`craftainer_crud.controllers.crud_actions.resolve_restore`
 same rate-limit/`exempt_single_record_action` treatment as the bulk
 update/delete routes). `revision_repository_dependency` + `resource`
 together add `GET <prefix>/revisions?id=`, a plain query against the
-shared `Revision` table (`craftainer_crud.models.revision`) — not routed through
-`crud_dependency`/`CRUDLike` at all, since it reads a different model
-entirely. `event_source_dependency` (an
+shared `Revision` table (`craftainer_crud.models.revision`). The record is
+first resolved through `crud_dependency`'s `get` (archived and unpublished
+included), so an owner scope applies and a record the caller cannot read —
+including one that was hard-deleted — is the same 404 `GET ?id=` gives; only
+then is the history read ([ADR 0009](../../../docs/adrs/0009-owner-scoped-revisions-and-events.md)). `event_source_dependency` (an
 `Annotated[craftainer_crud.interfaces.base.EventSource, Depends(...)]`-shaped value,
 mirroring `crud_dependency`'s own shape) adds `GET <prefix>/events`: a
 `StreamingResponse` (`media_type="text/event-stream"`) of that resource's
 create/update/update_many/delete/delete_many/restore/restore_many
 activity, gated by the same `read_roles` dependency as the plain `GET`
-list route. The route resolves an optional `subscriber_id` query param (honoured only if the server minted it for this resource, see `../interfaces/subscriber_ids.py`; otherwise a fresh id is issued)
+list route. For a resource with a read-scoped `OwnerScope` the stream is
+filtered per subscriber: an event is delivered only when the envelope's
+`owner` equals the caller's scope value (`interfaces.base.event_visible`), and
+an event with no `owner` is dropped. The route resolves an optional `subscriber_id` query param (honoured only if the server minted it for this resource, see `../interfaces/subscriber_ids.py`; otherwise a fresh id is issued)
 (falling back to the standard `Last-Event-ID` header on reconnect), calls
 `EventSource.subscribe`, and renders the result via `crud_router.py`'s
 private `_sse_events` — which uses `asyncio.wait` on a persisted

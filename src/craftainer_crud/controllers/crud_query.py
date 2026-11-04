@@ -47,6 +47,9 @@ from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortC
 # manifest reports as `pagination.default_limit`/`max_limit`.
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 1000
+# Largest `?skip=` a list route accepts: a negative offset is a database error, and an
+# unbounded one forces a full-table offset scan (or an int64 overflow).
+MAX_SKIP = 1_000_000
 
 _RESERVED_PARAMS = frozenset(
     {"skip", "limit", "sort", "include_archived", "only_archived", "include_unpublished"}
@@ -440,6 +443,7 @@ def parse_bulk_delete_include_unpublished(params: QueryParams) -> bool:
 __all__: Sequence[str] = (
     "DEFAULT_LIMIT",
     "MAX_LIMIT",
+    "MAX_SKIP",
     "FieldFilterInfo",
     "FieldKind",
     "FieldSpec",
