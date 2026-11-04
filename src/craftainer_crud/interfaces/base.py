@@ -707,7 +707,15 @@ def event_visible(crud: object, event: Mapping[str, Any]) -> bool:
     caller -- fail closed. A `CompatCRUD` is looked through to the interface it wraps.
     """
     inner = getattr(crud, "_crud", crud)
-    owner = getattr(inner, "_owner", None)
+    return scope_event_visible(getattr(inner, "_owner", None), event)
+
+
+def scope_event_visible(owner: OwnerScope | None, event: Mapping[str, Any]) -> bool:
+    """Return whether a caller holding `owner` (None: unscoped) may receive `event`.
+
+    The rule `event_visible` applies, for a host whose `scope_dependency` yields just the
+    scope (no CRUD, so no DB session held for the stream's life).
+    """
     if owner is None or not owner.read_scoped:
         return True
     event_owner = event.get("owner")

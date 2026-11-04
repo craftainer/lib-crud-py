@@ -31,6 +31,13 @@ field from the data, list routes bound `skip` to 0..1,000,000 and `limit` to 1..
 
 ## Consequences
 
+`build_json_router`, `build_xml_router` and `build_router` take an optional
+`scope_dependency` that returns only the `OwnerScope` (or `None`), for example built from the
+token. `/events` then resolves it instead of `crud_dependency`, so no DB session is held for
+the stream's life; the filtering is the same (`scope_event_visible`). Without it `/events`
+falls back to `crud_dependency`, which stays open, with any session it yields, until the
+stream ends.
+
 A minor release: the envelope and `EventSink.publish` gain a member, and `CRUDInterface`
 passes `owner` only for a scoped resource, so existing sinks keep working for owner-less
 resources. A scoped resource with a custom sink must accept `owner`. `/revisions` for a

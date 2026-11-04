@@ -28,6 +28,7 @@ from craftainer_crud.interfaces.base import (
     EventIterator,
     EventSource,
     InMemoryEventSink,
+    OwnerScope,
 )
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_crud.repositories.stats import (
@@ -1159,3 +1160,81 @@ async def test_sse_events_releases_the_subscription_with_an_event_step_in_flight
     consumer.cancel()
     await asyncio.gather(consumer, return_exceptions=True)
     assert sink._queues == {}
+
+
+# --- `/events` scope_dependency: visibility without resolving crud_dependency --------
+
+_SCOPED_EVENTS: list[dict[str, Any]] = [
+    {"resource": "gadget", "action": "create", "owner": "alice"},
+    {"resource": "gadget", "action": "create", "owner": "bob"},
+    {"resource": "gadget", "action": "create"},
+]
+
+
+async def _scoped_events() -> AsyncGenerator[dict[str, Any]]:
+    """Yield mine, someone else's and an owner-less event, then end."""
+    for event in _SCOPED_EVENTS:
+        yield dict(event)
+
+
+class _ScopedEventSource:
+    """EventSource replaying _SCOPED_EVENTS once."""
+
+    async def subscribe(
+        self, subscriber_id: str | None
+    ) -> tuple[str, EventIterator[dict[str, Any]]]:
+        """Return a finite iterator over the canned events."""
+        return subscriber_id or "stub-subscriber", _scoped_events()
+
+
+def _scoped_events_client(*, with_scope_dependency: bool) -> tuple[TestClient, list[str]]:
+    """Mount both routers; return the client and a log of crud_dependency resolutions."""
+    resolved: list[str] = []
+    scope = OwnerScope("owner", "alice")
+
+    def crud() -> Any:
+        resolved.append("crud")
+        return CRUDInterface(schema=_Gadget, repository=_FakeGadgetRepository(), owner=scope)
+
+    def get_scope() -> OwnerScope:
+        return scope
+
+    def source() -> EventSource:
+        return _ScopedEventSource()
+
+    common: dict[str, Any] = {
+        "prefix": "",
+        "tags": ["gadgets"],
+        "resource_label": "Gadget",
+        "schema": _Gadget,
+        "create_schema": _GadgetCreate,
+        "update_schema": _GadgetUpdate,
+        "crud_dependency": Annotated[Any, Depends(crud)],
+        "read_roles": NoAuth,
+        "write_roles": NoAuth,
+        "delete_roles": NoAuth,
+        "event_source_dependency": Annotated[EventSource, Depends(source)],
+    }
+    if with_scope_dependency:
+        common["scope_dependency"] = Annotated[OwnerScope, Depends(get_scope)]
+    scoped_app = FastAPI()
+    scoped_app.include_router(build_json_router(**common), prefix="/json")
+    scoped_app.include_router(
+        build_xml_router(item_tag="gadget", list_tag="gadgets", **common), prefix="/xml"
+    )
+    return TestClient(scoped_app), resolved
+
+
+@pytest.mark.parametrize("path", ["/json/events", "/xml/events"])
+@pytest.mark.parametrize("with_scope_dependency", [True, False])
+def test_events_visibility_with_and_without_scope_dependency(
+    path: str, with_scope_dependency: bool
+) -> None:
+    """Filtering is identical either way; only the fallback resolves crud_dependency."""
+    client, resolved = _scoped_events_client(with_scope_dependency=with_scope_dependency)
+    response = client.get(path)
+    assert response.status_code == 200
+    assert response.text.count('"action": "create"') == 1
+    assert "bob" not in response.text
+    assert '"owner"' not in response.text
+    assert resolved == ([] if with_scope_dependency else ["crud"])

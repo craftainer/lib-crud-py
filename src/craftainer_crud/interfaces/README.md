@@ -81,7 +81,7 @@ CRUD class, only a model, a view, and a router that wires the two through
   A host's dependency must reject sub-less tokens with 401/403 before
   constructing the `OwnerScope`, which raises on a missing value. `CRUDInterface` passes
   `owner` only when it has a scope, so a custom sink for an owner-less
-  resource may still omit the parameter. `event_visible(crud, event)` is the
+  resource may still omit the parameter. `event_visible(crud, event)` (or `scope_event_visible(scope, event)`, given only the scope) is the
   per-subscriber rule `GET <prefix>/events` applies.
 
   `restore`/`restore_many` mirror `delete`/`delete_many`'s own shape
