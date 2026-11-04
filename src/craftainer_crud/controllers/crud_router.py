@@ -936,7 +936,10 @@ async def _sse_events(
                 return
             if not visible(event):
                 continue
-            yield f"id: {sequence}\ndata: {json.dumps(event)}\n\n"
+            # `owner` is for broker-side routing and `visible` only (ADR 0009); it
+            # never reaches a subscriber, who may read other users' records.
+            frame = {key: value for key, value in event.items() if key != "owner"}
+            yield f"id: {sequence}\ndata: {json.dumps(frame)}\n\n"
             sequence += 1
     finally:
         if pending is not None:

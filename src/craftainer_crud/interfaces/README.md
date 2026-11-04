@@ -76,7 +76,10 @@ CRUD class, only a model, a view, and a router that wires the two through
   (fail closed; it never filters `IS NULL`), and `update`/`update_many` drop
   `field` from the update data, so ownership is set on create only. An
   `EventSink.publish` receives `owner=` (the scope's value) and the envelope
-  gains an `owner` member (non-JSON values as `str()`); `CRUDInterface` passes
+  gains an `owner` member (non-JSON values as `str()`) for broker-side
+  routing and filtering only: `/events` strips it from the SSE frame.
+  A host's dependency must reject sub-less tokens with 401/403 before
+  constructing the `OwnerScope`, which raises on a missing value. `CRUDInterface` passes
   `owner` only when it has a scope, so a custom sink for an owner-less
   resource may still omit the parameter. `event_visible(crud, event)` is the
   per-subscriber rule `GET <prefix>/events` applies.

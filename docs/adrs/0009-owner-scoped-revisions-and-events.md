@@ -20,7 +20,9 @@ bypassed the 1000-row cap), and `icontains` passed `%`/`_` through as LIKE wildc
 `/revisions` resolves the record through `crud.get(id, include_archived=True,
 include_unpublished=True)` first and answers the same 404 as `GET ?id=` when it is not
 visible. The event envelope gains an additive `owner` member (the scope's value, `null`
-without a scope; non-JSON values as `str()`), `EventSink.publish` gains an optional
+without a scope; non-JSON values as `str()`) for broker-side routing and filtering only:
+`/events` strips it from the frame it sends, so a subscriber never learns another user's
+value from the envelope. `EventSink.publish` gains an optional
 `owner` keyword, and `/events` drops, per subscriber, every event a read-scoped caller
 could not `get`, including events with no `owner`. The topic layout is unchanged.
 `OwnerScope` raises `ValueError` for `None` or `""`, `update`/`update_many` drop the owner
@@ -34,6 +36,7 @@ passes `owner` only for a scoped resource, so existing sinks keep working for ow
 resources. A scoped resource with a custom sink must accept `owner`. `/revisions` for a
 hard-deleted record is now a 404 (it was a 200 with the history); archived records still
 resolve. Resources without a scope or with `read_scoped=False` see every event as before,
-and the envelope now exposes the owner's value to them. A token without a subject claim
+and the envelope's `owner` stays on the broker (the SSE frame omits it), so they learn nothing
+beyond the record snapshot. A token without a subject claim
 now makes building the scope fail (a 500 from the host's dependency) instead of widening
 access. Events stay published before commit, and unbounded streams remain; separate items.

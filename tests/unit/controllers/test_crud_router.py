@@ -914,6 +914,21 @@ async def test_sse_events_yields_subscriber_id_frame_then_each_event() -> None:
     ]
 
 
+async def test_sse_events_strips_the_envelope_owner_from_the_frame() -> None:
+    """The envelope `owner` filters events broker-side but is never sent to a subscriber."""
+    request = cast(Request, _StubRequest(disconnect_after_calls=None))
+    frames = [
+        frame
+        async for frame in crud_router_module._sse_events(
+            request,
+            "sub-1",
+            _one_event({"resource": "gadget", "action": "create", "owner": "user-42"}),
+        )
+    ]
+    assert frames[1] == 'id: 1\ndata: {"resource": "gadget", "action": "create"}\n\n'
+    assert "user-42" not in "".join(frames)
+
+
 async def test_sse_events_yields_keep_alive_on_timeout(
     override_crud_config: CrudConfigOverride,
 ) -> None:

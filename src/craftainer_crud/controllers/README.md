@@ -129,7 +129,8 @@ activity, gated by the same `read_roles` dependency as the plain `GET`
 list route. For a resource with a read-scoped `OwnerScope` the stream is
 filtered per subscriber: an event is delivered only when the envelope's
 `owner` equals the caller's scope value (`interfaces.base.event_visible`), and
-an event with no `owner` is dropped. The route resolves an optional `subscriber_id` query param (honoured only if the server minted it for this resource, see `../interfaces/subscriber_ids.py`; otherwise a fresh id is issued)
+an event with no `owner` is dropped. The `owner` member is removed from the SSE frame
+sent to the subscriber. The route resolves an optional `subscriber_id` query param (honoured only if the server minted it for this resource, see `../interfaces/subscriber_ids.py`; otherwise a fresh id is issued)
 (falling back to the standard `Last-Event-ID` header on reconnect), calls
 `EventSource.subscribe`, and renders the result via `crud_router.py`'s
 private `_sse_events` — which uses `asyncio.wait` on a persisted
