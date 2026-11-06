@@ -10,6 +10,8 @@ from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 from craftainer_crud.interfaces.base import (
     MQTTEventSink,
@@ -19,6 +21,7 @@ from craftainer_crud.interfaces.base import (
     _SharedPublisher,
     close_event_publishers,
 )
+from craftainer_crud.interfaces.delivery import deliver_event
 from craftainer_crud.interfaces.subscriber_ids import mint_subscriber_id
 
 # A stand-in for the broker credential the sink forwards; not a real secret.
@@ -371,6 +374,42 @@ async def test_a_publish_that_fails_on_the_retry_too_is_raised() -> None:
     with pytest.raises(OSError, match="broker gone"):
         await _publish(sink, 2)
     assert all(client.closed for client in _FakeClient.instances)
+
+
+async def test_a_cancelled_publish_discards_the_client() -> None:
+    """A timeout or cancellation mid-publish leaves the client unusable: the next one reconnects."""
+    sink = _sink()
+    await _publish(sink)
+
+    async def _hang(topic: str, payload: str, qos: int) -> None:
+        await asyncio.Event().wait()
+
+    _FakeClient.instances[0].publish = _hang  # type: ignore[method-assign]
+    task = asyncio.ensure_future(_publish(sink, 2))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert _FakeClient.instances[0].closed
+    await _publish(sink, 3)
+    assert len(_FakeClient.instances) == 2
+
+
+async def test_close_event_publishers_waits_for_in_flight_deliveries() -> None:
+    """Shutdown drains started after-commit deliveries before it disconnects."""
+    sink = _sink()
+    engine = create_engine("sqlite://")
+    session = types.SimpleNamespace(sync_session=Session(engine))
+    await deliver_event(
+        sink, session=session, resource="hero", record_id=1, action="create", snapshot={}
+    )
+    session.sync_session.commit()
+    session.sync_session.close()
+    engine.dispose()
+    await close_event_publishers()
+    (client,) = _FakeClient.instances
+    assert len(client.published) == 1
+    assert client.closed
 
 
 async def test_a_failing_disconnect_is_logged_not_raised() -> None:

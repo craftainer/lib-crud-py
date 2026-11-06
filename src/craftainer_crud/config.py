@@ -75,6 +75,9 @@ def validate_mqtt_security(  # noqa: PLR0913 -- one keyword per MQTTConfig field
         if tls_context.verify_mode == ssl.CERT_NONE:
             msg = "tls_context must verify the broker certificate (not CERT_NONE)"
             raise ValueError(msg)
+        if not tls_context.check_hostname:
+            msg = "tls_context must verify the broker host name (check_hostname=True)"
+            raise ValueError(msg)
 
 
 def build_mqtt_tls_context(

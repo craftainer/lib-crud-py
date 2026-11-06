@@ -42,8 +42,9 @@ rollback drops them. A repository without a session (in-memory) publishes immedi
 sink failure is logged and counted (`event_delivery_stats()`), never raised, and not retried:
 delivery is best effort. `MQTTEventSink` publishes over one shared client per distinct broker
 setting (opened lazily on the running loop, one retry on a stale connection, a 10 s bound per
-publish); `close_event_publishers()` closes them on shutdown. A savepoint rollback inside the
-transaction does not retract earlier events; the library opens none.
+publish); `close_event_publishers()` waits for started deliveries, then closes them on shutdown. A
+savepoint release publishes nothing; a savepoint rollback drops only the events recorded
+inside it, and a session closed without a commit drops everything it held.
 
 **Event streams.** Each caller holds at most `CrudConfig.sse_max_streams_per_caller` (default
 5, `None` for no cap) concurrent `/events` streams per process; the next is a 429. The caller

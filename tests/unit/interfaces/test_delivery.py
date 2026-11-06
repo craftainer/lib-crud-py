@@ -1,10 +1,13 @@
 """Unit test: after-commit, best-effort event delivery (craftainer_crud.interfaces.delivery)."""
 
 import logging
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from craftainer_crud.interfaces.base import CRUDInterface
 from craftainer_crud.interfaces.delivery import (
@@ -85,16 +88,80 @@ async def test_events_wait_for_the_commit_and_publish_in_order() -> None:
     assert [call["record_id"] for call in sink.calls] == [1, 2, 3]
 
 
-async def test_a_rolled_back_transaction_publishes_nothing() -> None:
-    """after_rollback drops the held events, so a later commit does not release them."""
-    sink = _Sink()
-    session = AsyncSession()
-    await deliver_event(sink, session=session, **_event())
-    sync = session.sync_session
-    sync.dispatch.after_rollback(sync)  # what a real DBAPI rollback emits
-    await session.commit()
+class _Bound:
+    """What `deliver_event` needs of an AsyncSession, over a real sync session."""
+
+    def __init__(self) -> None:
+        self.engine = create_engine("sqlite://")
+        self.sync_session = Session(self.engine)
+
+
+@pytest.fixture
+def bound() -> Iterator[_Bound]:
+    """A sync session over in-memory SQLite, closed afterwards."""
+    holder = _Bound()
+    yield holder
+    holder.sync_session.close()
+    holder.engine.dispose()
+
+
+async def _flush(sink: _Sink) -> list[int]:
     await drain_event_deliveries()
-    assert sink.calls == []
+    return [call["record_id"] for call in sink.calls]
+
+
+async def test_a_rolled_back_transaction_publishes_nothing(bound: _Bound) -> None:
+    """A rollback drops the held events, so a later commit does not release them."""
+    sink = _Sink()
+    bound.sync_session.execute(text("select 1"))
+    await deliver_event(sink, session=bound, **_event())
+    bound.sync_session.rollback()
+    bound.sync_session.commit()
+    assert await _flush(sink) == []
+
+
+async def test_closing_without_a_commit_drops_the_events(bound: _Bound) -> None:
+    """A session reused after close() must not publish the abandoned transaction's events."""
+    sink = _Sink()
+    bound.sync_session.execute(text("select 1"))
+    await deliver_event(sink, session=bound, **_event(1))
+    bound.sync_session.close()
+    await deliver_event(sink, session=bound, **_event(2))
+    bound.sync_session.commit()
+    assert await _flush(sink) == [2]
+
+
+async def test_a_savepoint_release_does_not_publish_before_the_outer_commit(bound: _Bound) -> None:
+    """Only the outermost commit publishes; a rolled back outer transaction publishes nothing."""
+    sink = _Sink()
+    session = bound.sync_session
+    session.execute(text("select 1"))
+    savepoint = session.begin_nested()
+    await deliver_event(sink, session=bound, **_event(1))
+    savepoint.commit()
+    assert await _flush(sink) == []
+    session.rollback()
+    assert await _flush(sink) == []
+    await deliver_event(sink, session=bound, **_event(2))
+    session.commit()
+    assert await _flush(sink) == [2]
+
+
+async def test_a_savepoint_rollback_drops_only_the_events_recorded_inside_it(bound: _Bound) -> None:
+    """Earlier events survive; events in the failed savepoint, nested ones included, do not."""
+    sink = _Sink()
+    session = bound.sync_session
+    session.execute(text("select 1"))
+    await deliver_event(sink, session=bound, **_event(1))
+    outer = session.begin_nested()
+    await deliver_event(sink, session=bound, **_event(2))
+    inner = session.begin_nested()
+    await deliver_event(sink, session=bound, **_event(3))
+    inner.commit()
+    outer.rollback()
+    await deliver_event(sink, session=bound, **_event(4))
+    session.commit()
+    assert await _flush(sink) == [1, 4]
 
 
 async def test_a_failing_sink_after_commit_does_not_fail_the_commit() -> None:

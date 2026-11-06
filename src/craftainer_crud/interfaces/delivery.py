@@ -10,8 +10,9 @@ its events are published straight away.
 
 Delivery is best effort: a sink that raises is logged and counted
 (`event_delivery_stats().failed`), never surfaced to the request, and an event is not
-retried. A savepoint rollback inside the transaction does not retract the events recorded
-before it; the library opens no savepoints itself.
+retried. A savepoint (`begin_nested()`) release publishes nothing yet; a savepoint rollback
+drops only the events recorded inside it (and inside savepoints nested in it), and the
+events recorded before it still go out when the outer transaction commits.
 """
 
 import asyncio
@@ -52,7 +53,8 @@ def event_delivery_stats() -> EventDeliveryStats:
     return EventDeliveryStats(published=_published, failed=_failed)
 
 
-_PendingEvent = tuple["EventSink", dict[str, Any]]
+# (sink, event keywords, innermost savepoint open when it was recorded, or None)
+_PendingEvent = tuple["EventSink", dict[str, Any], Any]
 
 
 async def _publish_best_effort(sink: EventSink, kwargs: dict[str, Any]) -> None:
@@ -74,11 +76,13 @@ async def _publish_best_effort(sink: EventSink, kwargs: dict[str, Any]) -> None:
 
 
 async def _publish_all(events: list[_PendingEvent]) -> None:
-    for sink, kwargs in events:
+    for sink, kwargs, _savepoint in events:
         await _publish_best_effort(sink, kwargs)
 
 
 def _on_commit(sync_session: Any) -> None:  # noqa: ANN401 -- SQLAlchemy's sync Session
+    if sync_session.in_nested_transaction():
+        return  # a savepoint release; the outermost commit has not happened yet
     pending: list[_PendingEvent] = sync_session.info.get(_PENDING_KEY, [])
     if not pending:
         return
@@ -89,8 +93,27 @@ def _on_commit(sync_session: Any) -> None:  # noqa: ANN401 -- SQLAlchemy's sync 
     task.add_done_callback(_delivery_tasks.discard)
 
 
-def _on_rollback(sync_session: Any) -> None:  # noqa: ANN401 -- SQLAlchemy's sync Session
-    sync_session.info.get(_PENDING_KEY, []).clear()
+def _inside(savepoint: Any, rolled_back: Any) -> bool:  # noqa: ANN401 -- SessionTransaction
+    while savepoint is not None:
+        if savepoint is rolled_back:
+            return True
+        savepoint = savepoint.parent
+    return False
+
+
+def _on_soft_rollback(sync_session: Any, previous: Any) -> None:  # noqa: ANN401 -- SQLAlchemy
+    pending: list[_PendingEvent] = sync_session.info.get(_PENDING_KEY, [])
+    if previous.parent is None:
+        pending.clear()
+    else:
+        pending[:] = [item for item in pending if not _inside(item[2], previous)]
+
+
+def _on_transaction_end(sync_session: Any, transaction: Any) -> None:  # noqa: ANN401 -- SQLAlchemy
+    # The outermost transaction is over: after_commit has already taken what a commit
+    # publishes, so anything left belongs to a rollback or a close without commit.
+    if transaction.parent is None:
+        sync_session.info.get(_PENDING_KEY, []).clear()
 
 
 async def deliver_event(
@@ -108,8 +131,9 @@ async def deliver_event(
     if pending is None:
         pending = sync_session.info[_PENDING_KEY] = []
         event.listen(sync_session, "after_commit", _on_commit)
-        event.listen(sync_session, "after_rollback", _on_rollback)
-    pending.append((sink, kwargs))
+        event.listen(sync_session, "after_soft_rollback", _on_soft_rollback)
+        event.listen(sync_session, "after_transaction_end", _on_transaction_end)
+    pending.append((sink, kwargs, sync_session.get_nested_transaction()))
 
 
 async def drain_event_deliveries() -> None:

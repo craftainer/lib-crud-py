@@ -37,7 +37,7 @@ from craftainer_crud.config import (
     build_mqtt_tls_context,
     validate_mqtt_security,
 )
-from craftainer_crud.interfaces.delivery import deliver_event
+from craftainer_crud.interfaces.delivery import deliver_event, drain_event_deliveries
 from craftainer_crud.interfaces.subscriber_ids import resolve_subscriber_id
 from craftainer_crud.repositories.base import Repository
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
@@ -374,18 +374,20 @@ class _SharedPublisher:
         async with self._lock, asyncio.timeout(_PUBLISH_TIMEOUT_SECONDS):
             reused = self._client is not None
             try:
-                client = self._client or await self._connect()
-                await client.publish(topic, payload, qos=1)
-            except Exception:
-                await self._discard()
-                if not reused:
-                    raise
-                client = await self._connect()
                 try:
+                    client = self._client or await self._connect()
                     await client.publish(topic, payload, qos=1)
                 except Exception:
                     await self._discard()
-                    raise
+                    if not reused:
+                        raise
+                    client = await self._connect()
+                    await client.publish(topic, payload, qos=1)
+            except BaseException:
+                # A failure, timeout or cancellation leaves the client in an unknown
+                # state: never reuse it.
+                await asyncio.shield(self._discard())
+                raise
 
     async def close(self) -> None:
         """Disconnect the shared client, if any."""
@@ -397,7 +399,12 @@ _publishers: dict[tuple[object, ...], _SharedPublisher] = {}
 
 
 async def close_event_publishers() -> None:
-    """Disconnect every shared MQTT publisher connection (call on application shutdown)."""
+    """Disconnect every shared MQTT publisher connection (call on application shutdown).
+
+    Waits for the after-commit deliveries already started first, so a committed change is
+    not lost to the shutdown.
+    """
+    await drain_event_deliveries()
     publishers = list(_publishers.values())
     _publishers.clear()
     for publisher in publishers:

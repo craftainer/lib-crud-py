@@ -179,6 +179,10 @@ def test_a_supplied_context_must_verify_and_be_tls_1_2_or_newer() -> None:
         MQTTConfig(use_tls=True, tls_context=_context(minimum=ssl.TLSVersion.MINIMUM_SUPPORTED))
     with pytest.raises(ValueError, match="verify the broker"):
         MQTTConfig(use_tls=True, tls_context=_context(verify=False))
+    no_hostname = _context()
+    no_hostname.check_hostname = False
+    with pytest.raises(ValueError, match="host name"):
+        MQTTConfig(use_tls=True, tls_context=no_hostname)
     weak = _context(verify=False)
     assert MQTTConfig(use_tls=True, tls_context=weak, allow_insecure=True).tls_context is weak
 
