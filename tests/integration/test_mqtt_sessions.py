@@ -63,7 +63,9 @@ async def _queued_after_reconnect(resource: str, subscriber_id: str) -> int:
 async def _publish_while_disconnected(durable: bool) -> int:
     assert _HOST
     resource = f"session-{uuid.uuid4().hex}"
-    source = MQTTEventSource(hostname=_HOST, port=_PORT, resource=resource, keepalive=30)
+    source = MQTTEventSource(
+        hostname=_HOST, port=_PORT, resource=resource, keepalive=30, session_ttl=None
+    )
     sink = MQTTEventSink(hostname=_HOST, port=_PORT, resource=resource, keepalive=30)
     subscriber_id, events = await source.subscribe(None, durable=durable)
     await sink.publish(resource=resource, record_id=0, action="create", snapshot={})

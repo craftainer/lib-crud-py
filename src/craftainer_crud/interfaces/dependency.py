@@ -49,6 +49,11 @@ def _mqtt_kwargs(mqtt: MQTTConfig, resource: str) -> dict[str, Any]:
         "username": mqtt.username,
         "password": mqtt.password,
         "use_tls": mqtt.use_tls,
+        "tls_context": mqtt.tls_context,
+        "ca_file": mqtt.ca_file,
+        "client_cert": mqtt.client_cert,
+        "client_key": mqtt.client_key,
+        "allow_insecure": mqtt.allow_insecure,
     }
 
 
@@ -69,8 +74,8 @@ def build_repository_provider[ModelT: IdentifiedBase](
 
 def build_event_sink_provider(resource: str) -> Callable[[], EventSink]:
     """Return an EventSink provider for `resource`: the shared InMemoryEventSink in
-    mock mode (CrudConfig.use_memory), a fresh MQTTEventSink (stateless -- see its own
-    docstring) otherwise.
+    mock mode (CrudConfig.use_memory), an MQTTEventSink otherwise (cheap to build: equal
+    settings share one pooled broker connection -- see its own docstring).
     """
 
     def provider() -> EventSink:

@@ -58,7 +58,8 @@ The host application owns settings, the database engine and rate limiting;
 this package receives them:
 
 - `config.py` — `CrudConfig` (`use_memory`, `bulk_action_max_matched`,
-  `sse_keepalive_seconds`, `mqtt: MQTTConfig`) and `configure(config,
+  `sse_keepalive_seconds`, `sse_max_streams_per_caller`, `sse_durable_sessions`,
+  `mqtt: MQTTConfig` with its TLS options, see the root `README.md`) and `configure(config,
   session_factory)`. Call it once at startup, before the first request:
   `models.base.get_db`/`DBSession` open sessions from the injected
   `async_sessionmaker` (`get_session_factory()` raises if none was

@@ -11,11 +11,18 @@ import pytest
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 
+from tests.unit.conftest import CrudConfigOverride
 from tests.unit.manifest.server import FIXTURES, ROOT, build_server, load_json, token_headers
 
 CASES = sorted(p.name.removesuffix(".request.json") for p in FIXTURES.glob("*.request.json"))
 SCHEMA = load_json(ROOT / "schemas" / "crud-manifest" / "v1.json")
 STRUCTURAL = ("read", "create", "update", "draft")
+
+
+@pytest.fixture(autouse=True)
+def _durable_event_sessions(override_crud_config: CrudConfigOverride) -> None:
+    """The fixtures advertise persistent replay, which a host opts into."""
+    override_crud_config(sse_durable_sessions=True)
 
 
 def _shape(schema: dict[str, Any] | None) -> dict[str, Any] | None:

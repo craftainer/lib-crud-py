@@ -108,7 +108,7 @@ def _events(resource: RegisteredResource, paths: dict[str, str]) -> Events | Non
         path=paths["events"],
         resource=resource.events_resource,
         resume_param="subscriber_id",
-        replay="none" if config.use_memory else "persistent",
+        replay="persistent" if config.sse_durable_sessions and not config.use_memory else "none",
         keepalive_seconds=config.sse_keepalive_seconds,
         actions=actions,
     )

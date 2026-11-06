@@ -75,7 +75,9 @@ CRUD class, only a model, a view, and a router that wires the two through
   `OwnerScope(field, value)` raises `ValueError` for `value=None` or `""`
   (fail closed; it never filters `IS NULL`), and `update`/`update_many` drop
   `field` from the update data, so ownership is set on create only. An
-  `EventSink.publish` receives `owner=` (the scope's value) and the envelope
+  `EventSink.publish` is called after the transaction commits, best effort, via
+  `delivery.py`, and `MQTTEventSink` shares one broker connection per setting
+  ([ADR 0010](../../../docs/adrs/0010-hardened-mqtt-and-event-streams.md)); it receives `owner=` (the scope's value) and the envelope
   gains an `owner` member (non-JSON values as `str()`) for broker-side
   routing and filtering only: `/events` strips it from the SSE frame.
   A host's dependency must reject sub-less tokens with 401/403 before
@@ -119,6 +121,9 @@ CRUD class, only a model, a view, and a router that wires the two through
   directly (for those two adapters) is a third-party dependency, not
   another `crud/` module, so it doesn't change this package's own layer
   order below.
+- `delivery.py` — after-commit, best-effort event delivery
+  (`deliver_event`, `event_delivery_stats`, `drain_event_deliveries`); see its module
+  docstring and ADR 0010.
 - `cache.py` — `StatsCache`, the small `Protocol` (`get`/`set`/`invalidate`, all per
   `resource`) the router factories take as an optional `stats_cache=` to serve
   `/stats` and `/predict` from a shared cache; see `../controllers/README.md`'s
@@ -142,8 +147,8 @@ CRUD class, only a model, a view, and a router that wires the two through
   follow the same MODE-branching shape for `EventSink`/`EventSource`
   above: a shared `InMemoryEventSink` under `MODE=mock` (one per resource,
   paired so a sink's `publish()` reaches a source's `subscribe()`-
-  registered queues), a fresh, stateless `MQTTEventSink`/`MQTTEventSource`
-  otherwise.
+  registered queues), an `MQTTEventSink` (equal settings share one pooled
+  connection) and a fresh `MQTTEventSource` otherwise.
   The route-level factories built on top of `CRUDInterface`/`CompatCRUD`
   (`build_json_router`/`build_xml_router`/`build_web_router`) live in
   `../controllers/crud_router.py`, one layer up — see `../controllers/
