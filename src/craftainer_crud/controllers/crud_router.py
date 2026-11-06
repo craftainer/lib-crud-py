@@ -22,7 +22,9 @@ import contextlib
 import hashlib
 import json
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+import weakref
+from collections.abc import AsyncGenerator, Awaitable, Callable, Hashable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
 from typing import Annotated, Any
@@ -51,7 +53,13 @@ from craftainer_crud.controllers.crud_query import (
     reject_filters_with_id,
     reject_only_archived,
 )
-from craftainer_crud.interfaces.base import EventIterator, event_visible, scope_event_visible
+from craftainer_crud.controllers.stream_limits import StreamLease, caller_key, stream_limiter
+from craftainer_crud.interfaces.base import (
+    EventIterator,
+    EventSource,
+    event_visible,
+    scope_event_visible,
+)
 from craftainer_crud.interfaces.cache import StatsCache
 from craftainer_crud.manifest.registry import ManifestOptions, RegisteredResource
 from craftainer_crud.models.mixins import Schedulable
@@ -777,20 +785,18 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
             return [RevisionView.model_validate(record) for record in records]
 
     if event_source_dependency is not None:
-        visibility = _events_visibility(crud_dependency, scope_dependency)
+        events_label = resource or (manifest.name if manifest is not None else resource_label)
+        visibility = _events_caller(crud_dependency, scope_dependency, events_label)
 
         @router.get("/events", dependencies=[read_roles])
         async def stream_events(
             source: event_source_dependency,
-            visible: Annotated[Callable[[Mapping[str, Any]], bool], Depends(visibility)],
+            caller: Annotated[_EventCaller, Depends(visibility)],
             request: Request,
             subscriber_id: str | None = None,
         ) -> StreamingResponse:
-            resolved_subscriber_id = subscriber_id or request.headers.get("last-event-id")
-            resolved_id, events = await source.subscribe(resolved_subscriber_id)
-            return StreamingResponse(
-                _sse_events(request, resolved_id, events, visible=visible),
-                media_type="text/event-stream",
+            return await _open_event_stream(
+                request, source, caller, subscriber_id=subscriber_id, resource=events_label
             )
 
     if stats_enabled:
@@ -866,25 +872,75 @@ async def _require_visible_record(crud: Any, record_id: int, not_found: str) -> 
         raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
 
 
-def _events_visibility(crud_dependency: Any, scope_dependency: Any) -> Callable[..., Any]:
-    """Build the dependency that yields `/events`'s per-subscriber visibility predicate.
+@dataclass(frozen=True, slots=True)
+class _EventCaller:
+    """What `/events` needs to know about its caller: what they may see, and their budget key."""
+
+    visible: Callable[[Mapping[str, Any]], bool]
+    key: Hashable
+
+
+def _events_caller(
+    crud_dependency: Any, scope_dependency: Any, resource: str
+) -> Callable[..., Any]:
+    """Build the dependency that yields `/events`'s `_EventCaller`.
 
     With `scope_dependency` it resolves only that (the owner scope, e.g. from the token),
     so `crud_dependency` -- and any DB session it yields -- is never resolved for the
     stream. Without it, `/events` falls back to `crud_dependency` and holds it open for
-    the stream's life (ADR 0009).
+    the stream's life (ADR 0009). Either way the owner scope also keys the per-caller
+    stream cap (ADR 0010).
     """
     if scope_dependency is not None:
 
-        async def visible_for_scope(scope: scope_dependency) -> Callable[[Mapping[str, Any]], bool]:
-            return partial(scope_event_visible, scope)
+        async def caller_for_scope(scope: scope_dependency) -> _EventCaller:
+            return _EventCaller(partial(scope_event_visible, scope), caller_key(scope, resource))
 
-        return visible_for_scope
+        return caller_for_scope
 
-    async def visible_for_crud(crud: crud_dependency) -> Callable[[Mapping[str, Any]], bool]:
-        return partial(event_visible, crud)
+    async def caller_for_crud(crud: crud_dependency) -> _EventCaller:
+        owner = getattr(getattr(crud, "_crud", crud), "_owner", None)
+        return _EventCaller(partial(event_visible, crud), caller_key(owner, resource))
 
-    return visible_for_crud
+    return caller_for_crud
+
+
+async def _open_event_stream(
+    request: Request,
+    source: EventSource,
+    caller: _EventCaller,
+    *,
+    subscriber_id: str | None,
+    resource: str,
+) -> StreamingResponse:
+    """Subscribe the caller and wrap the subscription in an SSE response.
+
+    Refuses with 429 when the caller already holds `sse_max_streams_per_caller` streams.
+    A stream is transient unless `CrudConfig.sse_durable_sessions`; a transient one
+    ignores any resume id (a clean-session connect under a durable id would discard that
+    session) and starts under a fresh one.
+    """
+    config = get_config()
+    lease = stream_limiter.acquire(caller.key, config.sse_max_streams_per_caller)
+    if lease is None:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "too many concurrent event streams")
+    try:
+        if config.sse_durable_sessions:
+            resolved_subscriber_id = subscriber_id or request.headers.get("last-event-id")
+            resolved_id, events = await source.subscribe(resolved_subscriber_id)
+        else:
+            resolved_id, events = await source.subscribe(None, durable=False)
+    except BaseException:
+        lease.release()
+        raise
+    response = StreamingResponse(
+        _sse_events(request, resolved_id, events, visible=caller.visible, lease=lease),
+        media_type="text/event-stream",
+    )
+    # Backstop for a response dropped before its generator ever started (the generator's
+    # own `finally` cannot run then); `release` is idempotent.
+    weakref.finalize(response, lease.release)
+    return response
 
 
 async def _sse_events(
@@ -892,6 +948,7 @@ async def _sse_events(
     subscriber_id: str,
     events: EventIterator[dict[str, Any]],
     visible: Callable[[Mapping[str, Any]], bool] = lambda _event: True,
+    lease: StreamLease | None = None,
 ) -> AsyncGenerator[str]:
     """Render one EventSource subscription as an SSE byte stream.
 
@@ -965,6 +1022,8 @@ async def _sse_events(
             yield f"id: {sequence}\ndata: {json.dumps(frame)}\n\n"
             sequence += 1
     finally:
+        if lease is not None:
+            lease.release()
         if pending is not None:
             pending.cancel()
         # Release the subscription even if it was never iterated (a cancel before the
@@ -1207,20 +1266,18 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
             )
 
     if event_source_dependency is not None:
-        visibility = _events_visibility(crud_dependency, scope_dependency)
+        events_label = resource or resource_label
+        visibility = _events_caller(crud_dependency, scope_dependency, events_label)
 
         @router.get("/events", dependencies=[read_roles])
         async def stream_events_xml(
             source: event_source_dependency,
-            visible: Annotated[Callable[[Mapping[str, Any]], bool], Depends(visibility)],
+            caller: Annotated[_EventCaller, Depends(visibility)],
             request: Request,
             subscriber_id: str | None = None,
         ) -> StreamingResponse:
-            resolved_subscriber_id = subscriber_id or request.headers.get("last-event-id")
-            resolved_id, events = await source.subscribe(resolved_subscriber_id)
-            return StreamingResponse(
-                _sse_events(request, resolved_id, events, visible=visible),
-                media_type="text/event-stream",
+            return await _open_event_stream(
+                request, source, caller, subscriber_id=subscriber_id, resource=events_label
             )
 
     if stats_enabled:

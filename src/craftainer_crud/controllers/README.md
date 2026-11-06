@@ -8,6 +8,8 @@ import from here (see `../README.md`'s "Layering" section).
 
 - `crud_router.py` — the generic router factories (see "Generic CRUD
   router factories" below).
+- `stream_limits.py` — the per-caller cap on concurrent `/events` streams
+  (`StreamLimiter`, `caller_key`); see its module docstring and ADR 0010.
 - `crud_actions.py` / `crud_query.py` — the shared id/filter/bulk
   decision logic and the `field__op=value`/`sort=` query-string parser
   `crud_router.py`'s factories wrap; see their own module docstrings.
@@ -133,8 +135,8 @@ an event with no `owner` is dropped. The `owner` member is removed from the SSE 
 sent to the subscriber. The visibility check resolves the optional `scope_dependency=`
 (an `OwnerScope | None`, e.g. from the token, no DB session) when given; otherwise it
 resolves `crud_dependency`, which stays open for the stream's life, including any session
-it yields (ADR 0009). `build_router` forwards `scope_dependency` to the JSON and XML routers. The route resolves an optional `subscriber_id` query param (honoured only if the server minted it for this resource, see `../interfaces/subscriber_ids.py`; otherwise a fresh id is issued)
-(falling back to the standard `Last-Event-ID` header on reconnect), calls
+it yields (ADR 0009). `build_router` forwards `scope_dependency` to the JSON and XML routers. A caller holding `CrudConfig.sse_max_streams_per_caller` streams (default 5, counted in `stream_limits.py`, keyed on the owner scope's value, else one bucket per resource) gets a 429, and a stream is transient unless `CrudConfig.sse_durable_sessions` (ADR 0010). With durable sessions on, the route resolves an optional `subscriber_id` query param (honoured only if the server minted it for this resource, see `../interfaces/subscriber_ids.py`; otherwise a fresh id is issued)
+(falling back to the standard `Last-Event-ID` header on reconnect); with them off it ignores both, calls
 `EventSource.subscribe`, and renders the result via `crud_router.py`'s
 private `_sse_events` — which uses `asyncio.wait` on a persisted
 `__anext__()` task rather than `asyncio.wait_for` around each keep-alive

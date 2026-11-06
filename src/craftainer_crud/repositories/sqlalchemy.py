@@ -111,6 +111,11 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         self._model = model
         self._column_names = frozenset(sa_inspect(model).columns.keys())
 
+    @property
+    def session(self) -> AsyncSession:
+        """The session this repository writes through (for after-commit event delivery)."""
+        return self._session
+
     async def _reload(self, instances: Sequence[ModelT]) -> None:
         """Re-read `instances` from the database in one SELECT, refreshing expired columns.
 
