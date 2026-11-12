@@ -210,7 +210,7 @@ async def _bump_version(hero_id: int) -> None:
 
 
 def _interleave(
-    repository: SQLAlchemyRepository[Hero],
+    repository: SQLAlchemyRepository[Any],
     monkeypatch: pytest.MonkeyPatch,
     *,
     after_first_read: Callable[[], Awaitable[None]],
@@ -226,7 +226,7 @@ def _interleave(
         *,
         expected_version: datetime | None,
         scope: Sequence[FilterClause],
-    ) -> tuple[Hero | None, Sequence[ColumnElement[bool]]]:
+    ) -> tuple[Any, Sequence[ColumnElement[bool]]]:
         nonlocal calls
         calls += 1
         call = calls
@@ -323,3 +323,27 @@ async def test_versions_are_strictly_increasing_even_inside_one_transaction() ->
         second = await repository.update(hero.id, {"name": "B"}, expected_version=seen)
         assert second is not None
         assert second.updated_at > seen
+
+
+async def test_hard_delete_of_a_record_removed_meanwhile_returns_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The DELETE matches nothing because another writer removed the row; that's "not found"."""
+    async with engine.begin() as conn:
+        await conn.run_sync(lambda sync_conn: _hard_table.create(sync_conn, checkfirst=True))
+    try:
+        async with async_session_factory() as session:
+            repository = SQLAlchemyRepository(session, _HardRecord)
+            record = await repository.create({"value": 1})
+            await session.commit()
+
+            async def remove() -> None:
+                async with async_session_factory() as other:
+                    await other.execute(sa_delete(_HardRecord))
+                    await other.commit()
+
+            _interleave(repository, monkeypatch, after_first_read=remove)
+            assert await repository.delete(record.id, expected_version=None) is False
+    finally:
+        async with engine.begin() as conn:
+            await conn.run_sync(_hard_table.drop)
