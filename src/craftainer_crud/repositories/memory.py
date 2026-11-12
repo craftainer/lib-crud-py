@@ -408,6 +408,7 @@ class InMemoryRepository[ModelT: IdentifiedBase]:
         _raise_if_locked(instance, None)
         if hasattr(instance, "archived_at"):
             instance.archived_at = _now()
+            instance.updated_at = _next_version(instance.updated_at)
         else:
             del self._records[record_id]  # pragma: no cover -- see module docstring
         return True
@@ -459,6 +460,7 @@ class InMemoryRepository[ModelT: IdentifiedBase]:
         for instance in instances:
             if hasattr(instance, "archived_at"):
                 instance.archived_at = now
+                instance.updated_at = _next_version(instance.updated_at)
             else:
                 del self._records[instance.id]  # pragma: no cover -- see module docstring
         return instances

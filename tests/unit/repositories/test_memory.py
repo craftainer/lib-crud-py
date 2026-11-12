@@ -580,3 +580,17 @@ async def test_scope_restricts_single_record_writes(repository: InMemoryReposito
     assert await repository.delete(hero.id, expected_version=None, scope=outside) is False
     assert await repository.update(hero.id, {"powers": []}, expected_version=None, scope=inside)
     assert await repository.delete(hero.id, expected_version=None, scope=inside) is True
+
+
+async def test_soft_delete_moves_the_version_like_the_sql_backend(
+    repository: InMemoryRepository[Hero],
+) -> None:
+    """Archiving (single or bulk) bumps updated_at, so a pre-delete ETag can't match a restore."""
+    first, second = (await repository.list())[:2]
+    before = (first.updated_at, second.updated_at)
+    await repository.delete(first.id, expected_version=None)
+    await repository.delete_many(filters=[FilterClause("id", FilterOp.EQ, second.id)])
+    restored = await repository.restore(first.id)
+    assert restored is not None
+    assert restored.updated_at > before[0]
+    assert second.updated_at > before[1]

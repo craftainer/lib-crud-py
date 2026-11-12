@@ -5,14 +5,15 @@ removes what it created in a `finally`, even on failure.
 """
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from datetime import timedelta
-from typing import cast
+from datetime import datetime, timedelta
+from typing import Any, cast
 
 import pytest
-from sqlalchemy import Integer, Table
+from sqlalchemy import ColumnElement, Integer, Table
 from sqlalchemy import delete as sa_delete
+from sqlalchemy import update as sa_update
 from sqlalchemy.orm import Mapped, mapped_column
 
 from craftainer_crud.models.base import IdentifiedBase
@@ -192,3 +193,133 @@ async def test_hard_delete_is_conditional_too() -> None:
     finally:
         async with engine.begin() as conn:
             await conn.run_sync(_hard_table.drop)
+
+
+# --- deterministic interleavings: another writer commits between the read and the write ---
+
+
+async def _commit_hero_change(hero_id: int, **values: object) -> None:
+    """Commit `values` onto a hero from a second session (the "other writer")."""
+    async with async_session_factory() as session:
+        await session.execute(sa_update(Hero).where(Hero.id == hero_id).values(**values))
+        await session.commit()
+
+
+async def _bump_version(hero_id: int) -> None:
+    await _commit_hero_change(hero_id, updated_at=Hero.updated_at + timedelta(seconds=1))
+
+
+def _interleave(
+    repository: SQLAlchemyRepository[Hero],
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    after_first_read: Callable[[], Awaitable[None]],
+    before_second_read: Callable[[], Awaitable[None]] | None = None,
+) -> None:
+    """Run `after_first_read` after the pre-read and `before_second_read` before the re-read."""
+    real = repository._writable
+    calls = 0
+
+    async def wrapper(
+        record_id: int,
+        data: dict[str, Any] | None,
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause],
+    ) -> tuple[Hero | None, Sequence[ColumnElement[bool]]]:
+        nonlocal calls
+        calls += 1
+        call = calls
+        if call == 2 and before_second_read is not None:
+            await before_second_read()
+        result = await real(record_id, data, expected_version=expected_version, scope=scope)
+        if call == 1:
+            await after_first_read()
+        return result
+
+    monkeypatch.setattr(repository, "_writable", wrapper)
+
+
+async def test_a_version_bump_between_read_and_write_is_a_precondition_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The conditional UPDATE/soft-delete matches nothing and the re-read names the mismatch."""
+    async with _committed_hero() as hero, async_session_factory() as session:
+        repository = SQLAlchemyRepository(session, Hero)
+        _interleave(repository, monkeypatch, after_first_read=lambda: _bump_version(hero.id))
+        with pytest.raises(PreconditionFailedError):
+            await repository.update(hero.id, {"name": "X"}, expected_version=hero.updated_at)
+    async with _committed_hero() as hero, async_session_factory() as session:
+        repository = SQLAlchemyRepository(session, Hero)
+        _interleave(repository, monkeypatch, after_first_read=lambda: _bump_version(hero.id))
+        with pytest.raises(PreconditionFailedError):
+            await repository.delete(hero.id, expected_version=hero.updated_at)
+
+
+async def test_a_record_removed_between_read_and_write_is_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the row vanished meanwhile, update() returns None and delete() returns False."""
+
+    async def remove(hero_id: int) -> None:
+        async with async_session_factory() as session:
+            await session.execute(sa_delete(Hero).where(Hero.id == hero_id))
+            await session.commit()
+
+    async with _committed_hero() as hero, async_session_factory() as session:
+        repository = SQLAlchemyRepository(session, Hero)
+        _interleave(repository, monkeypatch, after_first_read=lambda: remove(hero.id))
+        assert (
+            await repository.update(hero.id, {"name": "X"}, expected_version=hero.updated_at)
+            is None
+        )
+    async with _committed_hero() as hero, async_session_factory() as session:
+        repository = SQLAlchemyRepository(session, Hero)
+        _interleave(repository, monkeypatch, after_first_read=lambda: remove(hero.id))
+        assert await repository.delete(hero.id, expected_version=None) is False
+
+
+async def test_a_lock_taken_between_read_and_write_blocks_even_an_unconditional_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The write's own WHERE excludes a locked row, so expected_version=None can't slip past."""
+    async with _committed_hero() as hero, async_session_factory() as session:
+        repository = SQLAlchemyRepository(session, Hero)
+        _interleave(
+            repository,
+            monkeypatch,
+            after_first_read=lambda: _commit_hero_change(hero.id, is_locked=True),
+        )
+        with pytest.raises(RecordLockedError):
+            await repository.update(hero.id, {"name": "X"}, expected_version=None)
+        stored = await _stored(hero.id)
+        assert stored is not None
+        assert stored.name == "Racer"
+
+
+async def test_a_change_that_is_undone_before_the_re_read_is_reported_as_a_conflict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lost write whose cause has vanished again is a conflict, not a missing record."""
+    async with _committed_hero() as hero, async_session_factory() as session:
+        repository = SQLAlchemyRepository(session, Hero)
+        _interleave(
+            repository,
+            monkeypatch,
+            after_first_read=lambda: _commit_hero_change(hero.id, is_locked=True),
+            before_second_read=lambda: _commit_hero_change(hero.id, is_locked=False),
+        )
+        with pytest.raises(PreconditionFailedError):
+            await repository.update(hero.id, {"name": "X"}, expected_version=None)
+
+
+async def test_versions_are_strictly_increasing_even_inside_one_transaction() -> None:
+    """Two writes in one transaction share Postgres's now(); the version still moves each time."""
+    async with _committed_hero() as hero, async_session_factory() as session:
+        repository = SQLAlchemyRepository(session, Hero)
+        first = await repository.update(hero.id, {"name": "A"}, expected_version=None)
+        assert first is not None
+        seen = first.updated_at
+        second = await repository.update(hero.id, {"name": "B"}, expected_version=seen)
+        assert second is not None
+        assert second.updated_at > seen

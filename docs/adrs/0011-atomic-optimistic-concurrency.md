@@ -42,8 +42,12 @@ predicate either.
   mismatch, locked) with `populate_existing`, so it never trusts a stale identity-map copy.
   When a conditional write matches no row, a read under the same predicates (minus the
   version) separates "removed meanwhile" (`None`/`False`) from "changed meanwhile"
-  (`PreconditionFailedError`). The explicit `updated_at = now()` in the `SET` list means even
-  an empty PATCH moves the version.
+  (`PreconditionFailedError`), a locked row raises `RecordLockedError`, a vanished one is
+  not found. The new version is set explicitly as `GREATEST(now(), updated_at + 1 microsecond)`
+  so it is always strictly later than the stored one (even inside one transaction, where
+  `now()` repeats, or after a writer that started later), and an empty PATCH moves it too.
+  The write's WHERE also excludes a locked row (`is_locked IS NOT TRUE`), so even an
+  unconditional write can't slip past a lock taken after the read.
 - `InMemoryRepository` checks and writes in one step with no `await` between, so on the event
   loop it is atomic; its `updated_at` is forced strictly after the previous value, so a fast
   second write can't leave the version unchanged.
@@ -59,14 +63,15 @@ predicate either.
 
 - Of two writers holding the same version exactly one wins; the other gets `412`. The
   router's `crud.get` comparison is kept for the early `412` and to obtain the version.
-- `updated_at` is only as good as its clock. Postgres `now()` is the transaction's start time,
-  so two writes in one transaction share a version, and the column has microsecond
-  granularity (OW L-2): two commits in the same microsecond could share a value. The in-memory
-  backend guards this itself; a host whose database can't tell two commits apart needs a real
-  version column.
+- `updated_at` is a timestamp, not a counter: the column has microsecond granularity (OW L-2),
+  and a write is guaranteed to move it forward only by the `GREATEST(..., +1 microsecond)` rule
+  above (SQL) or `_next_version` (in-memory). Two *different* writers can still end up with the
+  same value only if they both read the same stored value without the conditional write
+  separating them, which the WHERE prevents. A host whose database can't hold microseconds
+  needs a real version column.
 - A view with no `updated_at` still gets the pre-write `ETag` comparison but no atomic check.
-- The `is_locked` check is still a read before the write (a race with a concurrent lock is not
-  closed here).
+- The in-memory soft delete (single and bulk) now bumps `updated_at`, as the SQL backend
+  always did.
 - **Migration for callers** (e.g. template-fastapi): every call to `Repository.update`/`delete`,
   `CRUDInterface.update`/`delete` and `CompatCRUD.update`/`delete` must add
   `expected_version=` (`None` keeps today's behaviour). A custom `Repository` or `CRUDLike`
