@@ -28,15 +28,13 @@ A few branches below are `# pragma: no cover`, for three different reasons:
   gets today's hard-delete behavior unchanged (see docs/adrs/0012-soft-delete-
   via-marker-column.md) -- it's real, load-bearing generic code, just not one
   this app's own single example resource can reach.
-- Hero's own CRUDInterface always sets `owner` (see app.crud_1.heroes.
-  heroes_v2.get_hero_crud), which routes every single-record update/delete/
-  restore through this repository's own update_many/delete_many/restore_many
-  instead (see craftainer_crud.interfaces.base.OwnerScope's docstring) -- so update()/
-  delete()/restore() (the non-`_many` single-record methods) can never run
-  through tests/e2e either. tests/unit/repositories/test_memory.py calls them
-  directly, which is what actually covers them for the primary (`pytest`, i.e.
-  tests/unit + tests/integration) coverage gate; the pragma only affects what's
-  counted toward the separate `pytest tests/e2e` coverage gate.
+- Hero's own CRUDInterface always sets `owner`, which still routes a single-record
+  restore() through restore_many(), so restore() can never run through tests/e2e
+  either. tests/unit/repositories/test_memory.py calls it directly, which is what
+  actually covers it for the primary (`pytest`, i.e. tests/unit + tests/integration)
+  coverage gate; the pragma only affects what's counted toward the separate
+  `pytest tests/e2e` coverage gate. (update()/delete() are reached through the
+  interface now -- see `expected_version`/`scope`.)
 - `stats()`'s own lifecycle-mixin detection (`has_archivable`/`has_draftable`/
   `has_lockable`/`has_schedulable`) is generic over which mixins the underlying
   model has *any* of -- but Hero (again, the only model reaching this repository
@@ -57,7 +55,7 @@ from typing import Any
 from sqlalchemy import inspect as sa_inspect
 
 from craftainer_crud.models.base import IdentifiedBase
-from craftainer_crud.repositories.base import RecordLockedError
+from craftainer_crud.repositories.base import PreconditionFailedError, RecordLockedError
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_crud.repositories.stats import (
     LifecycleStats,
@@ -118,6 +116,16 @@ def _regex_matches(pattern: str, value: str) -> bool:
 def _now() -> datetime:
     """Return the current time as naive UTC, matching how Postgres stores timestamps."""
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _next_version(previous: datetime) -> datetime:
+    """Return the new `updated_at` for a write: now, but always strictly after `previous`.
+
+    A fast machine can call `_now()` twice inside one clock tick; without this a second
+    write would leave `updated_at` (the optimistic-concurrency version) unchanged and a
+    stale `expected_version` would still match.
+    """
+    return max(_now(), previous + timedelta(microseconds=1))
 
 
 def _bucket_start(bucket: TimeBucket, value: datetime) -> datetime:
@@ -339,32 +347,70 @@ class InMemoryRepository[ModelT: IdentifiedBase]:
         self._next_id += 1
         return instance
 
-    async def update(  # pragma: no cover -- see module docstring
-        self, record_id: int, data: dict[str, Any]
+    def _writable(
+        self,
+        record_id: int,
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause],
+    ) -> ModelT | None:
+        """Return the live record `record_id` if it's in `scope` and at `expected_version`.
+
+        None when it doesn't exist, is archived or falls outside `scope`; raises
+        PreconditionFailedError when it exists but its `updated_at` differs. Callers
+        write straight after this with no `await` in between, so on the single event
+        loop the check and the write are atomic (this is the in-memory equivalent of the
+        SQL repository's one conditional statement).
+        """
+        instance = self._records.get(record_id)
+        if (
+            instance is None
+            or getattr(instance, "archived_at", None) is not None
+            or not all(_matches(instance, clause) for clause in scope)
+        ):
+            return None
+        if expected_version is not None and instance.updated_at != expected_version:
+            raise PreconditionFailedError(
+                f"record {record_id!r} is at version {instance.updated_at!r}, "
+                f"not the expected {expected_version!r}"
+            )
+        return instance
+
+    async def update(
+        self,
+        record_id: int,
+        data: dict[str, Any],
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause] = (),
     ) -> ModelT | None:
         """Apply the given field values to the record with the given id, if it exists."""
-        instance = self._records.get(record_id)
-        if instance is None or getattr(instance, "archived_at", None) is not None:
+        instance = self._writable(record_id, expected_version=expected_version, scope=scope)
+        if instance is None:
             return None
         _raise_if_locked(instance, data)
         for field, value in data.items():
             setattr(instance, field, value)
-        instance.updated_at = _now()
+        instance.updated_at = _next_version(instance.updated_at)
         return instance
 
-    async def delete(self, record_id: int) -> bool:  # pragma: no cover -- see module docstring
+    async def delete(
+        self,
+        record_id: int,
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause] = (),
+    ) -> bool:
         """Delete the record with the given id; return whether it existed."""
-        instance = self._records.get(record_id)
+        instance = self._writable(record_id, expected_version=expected_version, scope=scope)
         if instance is None:
             return False
-        if hasattr(instance, "archived_at"):
-            if instance.archived_at is not None:
-                return False
-            _raise_if_locked(instance, None)
-            instance.archived_at = _now()
-            return True
         _raise_if_locked(instance, None)
-        del self._records[record_id]
+        if hasattr(instance, "archived_at"):
+            instance.archived_at = _now()
+            instance.updated_at = _next_version(instance.updated_at)
+        else:
+            del self._records[record_id]  # pragma: no cover -- see module docstring
         return True
 
     async def update_many(
@@ -386,11 +432,10 @@ class InMemoryRepository[ModelT: IdentifiedBase]:
         ]
         for instance in instances:
             _raise_if_locked(instance, data)
-        now = _now()
         for instance in instances:
             for field, value in data.items():
                 setattr(instance, field, value)
-            instance.updated_at = now
+            instance.updated_at = _next_version(instance.updated_at)
         return instances
 
     async def delete_many(
@@ -415,6 +460,7 @@ class InMemoryRepository[ModelT: IdentifiedBase]:
         for instance in instances:
             if hasattr(instance, "archived_at"):
                 instance.archived_at = now
+                instance.updated_at = _next_version(instance.updated_at)
             else:
                 del self._records[instance.id]  # pragma: no cover -- see module docstring
         return instances

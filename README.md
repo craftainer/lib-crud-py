@@ -231,6 +231,18 @@ release that changes those models therefore needs a new migration in the host
 application, and the release notes say so. Migrations stay immutable once
 applied (NFR-0019 in the host repository).
 
+## Breaking: `expected_version` on `update`/`delete`
+
+`Repository.update`/`delete`, `CRUDInterface.update`/`delete` and `CompatCRUD.update`/
+`delete` now require a keyword `expected_version: datetime | None` (the record's
+`updated_at`; `None` writes unconditionally), and the SQL and in-memory repositories check
+it atomically with the write, raising `PreconditionFailedError` (the routers answer `412`,
+as for a stale `If-Match`). `Repository.update`/`delete` also take `scope=` (extra filter
+clauses, used for the owner scope). Migrate by adding `expected_version=None` to existing
+calls (or the version you want enforced), and make any custom `Repository`/`CRUDLike`
+accept both keywords. HTTP behaviour is unchanged. Details and limits:
+[ADR 0011](docs/adrs/0011-atomic-optimistic-concurrency.md).
+
 ## Versioning
 
 [SemVer](https://semver.org/), starting at `0.1.0`. While the major version is

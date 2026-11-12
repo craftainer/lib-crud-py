@@ -9,6 +9,7 @@ and build_xml_router's own public signatures are unchanged by this split.
 """
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException, Request, status
@@ -27,7 +28,7 @@ from craftainer_crud.controllers.crud_query import (
     reject_only_archived,
 )
 from craftainer_crud.interfaces.base import CRUDLike
-from craftainer_crud.repositories.base import RecordLockedError
+from craftainer_crud.repositories.base import PreconditionFailedError, RecordLockedError
 from craftainer_crud.repositories.filtering import FilterClause
 from craftainer_crud.views.bulk import BulkDeleteResult, BulkUpdateResult
 
@@ -40,6 +41,19 @@ _NO_TARGET_ERROR = [
         "type": "value_error",
     }
 ]
+
+
+def precondition_failed(not_found: str) -> HTTPException:
+    """Return the `412` a stale `If-Match` gets, named after the resource in `not_found`.
+
+    Shared by the router's pre-write ETag comparison and by the `PreconditionFailedError`
+    a repository raises when another writer got in between that comparison and the write,
+    so a client sees one response either way.
+    """
+    return HTTPException(
+        status.HTTP_412_PRECONDITION_FAILED,
+        f"{not_found.removesuffix(' not found')} was modified since the supplied If-Match",
+    )
 
 
 def _actor(request: Request) -> str:
@@ -138,15 +152,23 @@ async def resolve_update(
     id: int | None,  # noqa: A002
     data: BaseModel,
     not_found: str,
+    expected_version: datetime | None,
 ) -> Any:  # BaseModel | BulkUpdateResult, see module docstring
-    """Update one record by id, or bulk-update every record matching the query filters."""
+    """Update one record by id, or bulk-update every record matching the query filters.
+
+    `expected_version` (from `If-Match`, see craftainer_crud.controllers.crud_router) makes
+    the single-record write conditional; None writes unconditionally. A bulk action has no
+    one version to compare and ignores it.
+    """
     reject_only_archived(request.query_params)
     if id is not None:
         reject_filters_with_id(request.query_params)
         try:
-            updated = await crud.update(id, data)
+            updated = await crud.update(id, data, expected_version=expected_version)
         except RecordLockedError as exc:
             raise HTTPException(status.HTTP_423_LOCKED, str(exc)) from exc
+        except PreconditionFailedError as exc:
+            raise precondition_failed(not_found) from exc
         if updated is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
         logger.info("Update: actor=%s path=%s id=%r", _actor(request), request.url.path, id)
@@ -178,15 +200,21 @@ async def resolve_delete(
     *,
     id: int | None,  # noqa: A002
     not_found: str,
+    expected_version: datetime | None,
 ) -> BulkDeleteResult | None:
-    """Delete one record by id, or bulk-delete every record matching the query filters."""
+    """Delete one record by id, or bulk-delete every record matching the query filters.
+
+    `expected_version` as in `resolve_update`.
+    """
     reject_only_archived(request.query_params)
     if id is not None:
         reject_filters_with_id(request.query_params)
         try:
-            deleted = await crud.delete(id)
+            deleted = await crud.delete(id, expected_version=expected_version)
         except RecordLockedError as exc:
             raise HTTPException(status.HTTP_423_LOCKED, str(exc)) from exc
+        except PreconditionFailedError as exc:
+            raise precondition_failed(not_found) from exc
         if not deleted:
             raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
         logger.info("Delete: actor=%s path=%s id=%r", _actor(request), request.url.path, id)

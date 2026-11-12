@@ -56,7 +56,9 @@ async def test_crud_roundtrip_against_real_postgres() -> None:
         heroes = await repository.list()
         assert any(hero.id == created.id for hero in heroes)
 
-        updated = await repository.update(created.id, {"powers": ["Repulsor blasts"]})
+        updated = await repository.update(
+            created.id, {"powers": ["Repulsor blasts"]}, expected_version=None
+        )
         assert updated is not None
         assert updated.powers == ["Repulsor blasts"]
 
@@ -67,11 +69,13 @@ async def test_crud_roundtrip_against_real_postgres() -> None:
         # row is gone (False/None), same as a genuine hard delete would from the
         # caller's point of view. Only restore()/get(include_archived=True)
         # reach it.
-        assert await repository.delete(created.id) is True
+        assert await repository.delete(created.id, expected_version=None) is True
         assert await repository.get(created.id) is None
         assert await repository.get(created.id, include_archived=True) is not None
-        assert await repository.delete(created.id) is False
-        assert await repository.update(created.id, {"powers": ["N/A"]}) is None
+        assert await repository.delete(created.id, expected_version=None) is False
+        assert (
+            await repository.update(created.id, {"powers": ["N/A"]}, expected_version=None) is None
+        )
         restored = await repository.restore(created.id)
         assert restored is not None
         assert restored.archived_at is None
@@ -196,9 +200,11 @@ async def test_lock_blocks_update_and_delete_except_the_unlocking_update() -> No
         )
 
         with pytest.raises(RecordLockedError):
-            await repository.update(locked.id, {"powers": ["Should not apply"]})
+            await repository.update(
+                locked.id, {"powers": ["Should not apply"]}, expected_version=None
+            )
         with pytest.raises(RecordLockedError):
-            await repository.delete(locked.id)
+            await repository.delete(locked.id, expected_version=None)
 
         id_filter = [FilterClause("id", FilterOp.EQ, locked.id)]
         with pytest.raises(RecordLockedError):
@@ -209,13 +215,17 @@ async def test_lock_blocks_update_and_delete_except_the_unlocking_update() -> No
         # Unlocking and editing in the same request is refused too -- unlock must be
         # its own request, not a way to slip an edit past the lock.
         with pytest.raises(RecordLockedError):
-            await repository.update(locked.id, {"is_locked": False, "powers": ["Should not apply"]})
+            await repository.update(
+                locked.id,
+                {"is_locked": False, "powers": ["Should not apply"]},
+                expected_version=None,
+            )
 
-        unlocked = await repository.update(locked.id, {"is_locked": False})
+        unlocked = await repository.update(locked.id, {"is_locked": False}, expected_version=None)
         assert unlocked is not None
         assert unlocked.is_locked is False
 
-        edited = await repository.update(locked.id, {"powers": ["Freed"]})
+        edited = await repository.update(locked.id, {"powers": ["Freed"]}, expected_version=None)
         assert edited is not None
         assert edited.powers == ["Freed"]
 
@@ -272,8 +282,8 @@ async def test_restore_many_via_filters() -> None:
         batgirl = await repository.create(
             {"name": "Restorable Batgirl", "powers": ["A"], "owner_id": "tester"}
         )
-        assert await repository.delete(batman.id) is True
-        assert await repository.delete(batgirl.id) is True
+        assert await repository.delete(batman.id, expected_version=None) is True
+        assert await repository.delete(batgirl.id, expected_version=None) is True
 
         name_filter = [FilterClause("name", FilterOp.ICONTAINS, "Restorable")]
         restored = await repository.restore_many(filters=name_filter)
@@ -286,7 +296,7 @@ async def test_delete_missing_returns_false() -> None:
     """delete() returns False for an id that doesn't exist, not just an already-archived one."""
     async with async_session_factory() as session:
         repository = SQLAlchemyRepository(session, Hero)
-        assert await repository.delete(-1) is False
+        assert await repository.delete(-1, expected_version=None) is False
 
 
 async def test_restore_single_record_clears_archived_at() -> None:
@@ -301,7 +311,7 @@ async def test_restore_single_record_clears_archived_at() -> None:
         created = await repository.create(
             {"name": "Restore Single", "powers": ["A"], "owner_id": "tester"}
         )
-        assert await repository.delete(created.id) is True
+        assert await repository.delete(created.id, expected_version=None) is True
 
         restored = await repository.restore(created.id)
         assert restored is not None
@@ -326,8 +336,8 @@ async def test_only_archived_against_real_postgres() -> None:
         second = await repository.create(
             {"name": "OnlyArch B", "powers": ["A"], "owner_id": "tester"}
         )
-        assert await repository.delete(first.id) is True
-        assert await repository.delete(second.id) is True
+        assert await repository.delete(first.id, expected_version=None) is True
+        assert await repository.delete(second.id, expected_version=None) is True
         prefix = [FilterClause("name", FilterOp.ICONTAINS, "OnlyArch")]
 
         archived = await repository.list(only_archived=True, filters=prefix)
@@ -426,7 +436,7 @@ async def test_stats_against_real_postgres() -> None:
         assert with_bucket.time_series is not None
         assert sum(bucket.count for bucket in with_bucket.time_series) == 2
 
-        await repository.delete(batman.id)
+        await repository.delete(batman.id, expected_version=None)
         after_delete = await repository.stats(
             numeric_fields=[], categorical_fields=[], filters=id_filter
         )
@@ -488,7 +498,7 @@ async def test_delete_many_include_unpublished() -> None:
         future = await make("Future", publish_at=now + timedelta(days=1))
         expired = await make("Expired", unpublish_at=now - timedelta(days=1))
         archived = await make("Archived")
-        assert await repository.delete(archived)
+        assert await repository.delete(archived, expected_version=None)
         bulk = [FilterClause("name", FilterOp.ICONTAINS, "BD1 ")]
 
         kept = await repository.delete_many(filters=bulk, include_unpublished=False)

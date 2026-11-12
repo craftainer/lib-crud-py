@@ -24,7 +24,9 @@ CRUD class, only a model, a view, and a router that wires the two through
   one. `base.py` also has `OwnerScope`, an opt-in per-user/per-tenant
   scoping hook: pass `CRUDInterface(..., owner=OwnerScope(field, value))` and
   `update`/`delete`/`update_many`/`delete_many` are restricted to records
-  where `field == value`, `create` stamps `field` with `value` rather than
+  where `field == value` (the single-record `update`/`delete` pass it to the
+  repository as `scope`, alongside the required `expected_version` -- see
+  ADR 0011), `create` stamps `field` with `value` rather than
   trusting it from the input view, and `get`/`list`/`count` are restricted
   too *unless* `read_scoped=False` is also passed, in which case every
   caller reads every record but can still only write their own.

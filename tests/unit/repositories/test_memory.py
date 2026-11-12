@@ -4,6 +4,7 @@ Uses the Hero model directly (not mocked) since InMemoryRepository is generic ov
 any IdentifiedBase subclass and Hero is the test resource in tests/support.
 """
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from craftainer_crud.models.base import IdentifiedBase
 from craftainer_crud.models.mixins import Lockable
 from craftainer_crud.repositories import memory
-from craftainer_crud.repositories.base import RecordLockedError
+from craftainer_crud.repositories.base import PreconditionFailedError, RecordLockedError
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_crud.repositories.memory import InMemoryRepository
 from craftainer_crud.repositories.stats import TimeBucket
@@ -144,14 +145,16 @@ async def test_get_update_and_delete_by_id(repository: InMemoryRepository[Hero])
     assert fetched is not None
     assert fetched.name == "Batman"
 
-    updated = await repository.update(batman.id, {"powers": ["Martial arts"]})
+    updated = await repository.update(
+        batman.id, {"powers": ["Martial arts"]}, expected_version=None
+    )
     assert updated is not None
     assert updated.powers == ["Martial arts"]
 
-    assert await repository.delete(batman.id) is True
+    assert await repository.delete(batman.id, expected_version=None) is True
     assert await repository.get(batman.id) is None
-    assert await repository.delete(batman.id) is False
-    assert await repository.update(batman.id, {"powers": ["N/A"]}) is None
+    assert await repository.delete(batman.id, expected_version=None) is False
+    assert await repository.update(batman.id, {"powers": ["N/A"]}, expected_version=None) is None
 
 
 async def test_update_many_applies_to_every_match(repository: InMemoryRepository[Hero]) -> None:
@@ -187,9 +190,9 @@ async def test_lock_blocks_update_and_delete_except_the_unlocking_update(
     )
 
     with pytest.raises(RecordLockedError):
-        await repository.update(locked.id, {"powers": ["Should not apply"]})
+        await repository.update(locked.id, {"powers": ["Should not apply"]}, expected_version=None)
     with pytest.raises(RecordLockedError):
-        await repository.delete(locked.id)
+        await repository.delete(locked.id, expected_version=None)
 
     id_filter = [FilterClause("id", FilterOp.EQ, locked.id)]
     with pytest.raises(RecordLockedError):
@@ -200,13 +203,15 @@ async def test_lock_blocks_update_and_delete_except_the_unlocking_update(
     # Unlocking and editing in the same request is refused too -- unlock must be
     # its own request, not a way to slip an edit past the lock.
     with pytest.raises(RecordLockedError):
-        await repository.update(locked.id, {"is_locked": False, "powers": ["Should not apply"]})
+        await repository.update(
+            locked.id, {"is_locked": False, "powers": ["Should not apply"]}, expected_version=None
+        )
 
-    unlocked = await repository.update(locked.id, {"is_locked": False})
+    unlocked = await repository.update(locked.id, {"is_locked": False}, expected_version=None)
     assert unlocked is not None
     assert unlocked.is_locked is False
 
-    edited = await repository.update(locked.id, {"powers": ["Freed"]})
+    edited = await repository.update(locked.id, {"powers": ["Freed"]}, expected_version=None)
     assert edited is not None
     assert edited.powers == ["Freed"]
 
@@ -247,8 +252,8 @@ async def test_restore_many_via_filters(repository: InMemoryRepository[Hero]) ->
     heroes = await repository.list()
     batman = next(hero for hero in heroes if hero.name == "Batman")
     batgirl = next(hero for hero in heroes if hero.name == "Batgirl")
-    assert await repository.delete(batman.id) is True
-    assert await repository.delete(batgirl.id) is True
+    assert await repository.delete(batman.id, expected_version=None) is True
+    assert await repository.delete(batgirl.id, expected_version=None) is True
 
     name_filter = [FilterClause("name", FilterOp.ICONTAINS, "bat")]
     restored = await repository.restore_many(filters=name_filter)
@@ -259,14 +264,14 @@ async def test_restore_many_via_filters(repository: InMemoryRepository[Hero]) ->
 
 async def test_delete_missing_returns_false(repository: InMemoryRepository[Hero]) -> None:
     """delete() returns False for an id that was never created, not just an archived one."""
-    assert await repository.delete(999) is False
+    assert await repository.delete(999, expected_version=None) is False
 
 
 async def test_restore_clears_archived_at(repository: InMemoryRepository[Hero]) -> None:
     """restore() (single-record, not restore_many) clears archived_at and returns the record."""
     heroes = await repository.list()
     batman = next(hero for hero in heroes if hero.name == "Batman")
-    assert await repository.delete(batman.id) is True
+    assert await repository.delete(batman.id, expected_version=None) is True
 
     restored = await repository.restore(batman.id)
     assert restored is not None
@@ -281,8 +286,8 @@ async def test_only_archived_returns_just_archived_rows(
     heroes = await repository.list()
     batman = next(hero for hero in heroes if hero.name == "Batman")
     batgirl = next(hero for hero in heroes if hero.name == "Batgirl")
-    assert await repository.delete(batman.id) is True
-    assert await repository.delete(batgirl.id) is True
+    assert await repository.delete(batman.id, expected_version=None) is True
+    assert await repository.delete(batgirl.id, expected_version=None) is True
 
     archived = await repository.list(only_archived=True)
     assert {hero.name for hero in archived} == {"Batman", "Batgirl"}
@@ -375,8 +380,8 @@ async def test_stats_lifecycle_breakdown(repository: InMemoryRepository[Hero]) -
     heroes = await repository.list()
     batman = next(hero for hero in heroes if hero.name == "Batman")
     batgirl = next(hero for hero in heroes if hero.name == "Batgirl")
-    await repository.delete(batman.id)
-    await repository.update(batgirl.id, {"is_locked": True})
+    await repository.delete(batman.id, expected_version=None)
+    await repository.update(batgirl.id, {"is_locked": True}, expected_version=None)
 
     result = await repository.stats(numeric_fields=[], categorical_fields=[])
     assert result.lifecycle is not None
@@ -463,7 +468,7 @@ async def test_delete_many_include_unpublished(repository: InMemoryRepository[He
         {"name": "Bulk Expired", "powers": ["A"], "unpublish_at": now - timedelta(days=1)}
     )
     archived = await repository.create({"name": "Bulk Archived", "powers": ["A"]})
-    assert await repository.delete(archived.id)
+    assert await repository.delete(archived.id, expected_version=None)
     bulk = [FilterClause("name", FilterOp.ICONTAINS, "Bulk")]
 
     kept = await repository.delete_many(filters=bulk, include_unpublished=False)
@@ -475,3 +480,117 @@ async def test_delete_many_include_unpublished(repository: InMemoryRepository[He
     assert {hero.id for hero in rest} == {future.id, expired.id}
     assert archived.id not in {hero.id for hero in rest}
     assert await repository.delete_many(filters=bulk, include_unpublished=True) == []
+
+
+async def test_update_with_current_version_writes_and_advances_the_version(
+    repository: InMemoryRepository[Hero],
+) -> None:
+    """A matching expected_version writes, and the stored version moves strictly forward."""
+    hero = (await repository.list())[0]
+    seen = hero.updated_at
+    updated = await repository.update(hero.id, {"name": "A"}, expected_version=seen)
+    assert updated is not None
+    assert updated.name == "A"
+    assert updated.updated_at > seen
+
+
+async def test_two_updates_with_the_same_expected_version_exactly_one_wins(
+    repository: InMemoryRepository[Hero],
+) -> None:
+    """Racing writers holding one version: the first wins, the second is refused untouched."""
+    hero = (await repository.list())[0]
+    seen = hero.updated_at
+
+    async def attempt(name: str) -> str | None:
+        try:
+            result = await repository.update(hero.id, {"name": name}, expected_version=seen)
+        except PreconditionFailedError:
+            return None
+        return None if result is None else name
+
+    outcomes = await asyncio.gather(attempt("first"), attempt("second"))
+    assert sorted(o for o in outcomes if o is not None) == ["first"]
+    stored = await repository.get(hero.id)
+    assert stored is not None
+    assert stored.name == "first"
+
+
+async def test_update_version_is_strictly_increasing_within_one_clock_tick(
+    repository: InMemoryRepository[Hero], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With a frozen clock every write still moves the version, so a stale one never matches."""
+    frozen = datetime(2030, 1, 1)
+    monkeypatch.setattr(memory, "_now", lambda: frozen)
+    hero = (await repository.list())[0]
+    first = await repository.update(hero.id, {"name": "A"}, expected_version=None)
+    assert first is not None
+    version_one = first.updated_at
+    second = await repository.update(hero.id, {"name": "B"}, expected_version=version_one)
+    assert second is not None
+    assert second.updated_at > version_one
+    with pytest.raises(PreconditionFailedError):
+        await repository.update(hero.id, {"name": "C"}, expected_version=version_one)
+
+
+async def test_update_with_none_is_unconditional(repository: InMemoryRepository[Hero]) -> None:
+    """expected_version=None writes whatever the stored version is."""
+    hero = (await repository.list())[0]
+    await repository.update(hero.id, {"name": "A"}, expected_version=None)
+    again = await repository.update(hero.id, {"name": "B"}, expected_version=None)
+    assert again is not None
+    assert again.name == "B"
+
+
+async def test_delete_with_stale_version_raises_and_keeps_the_record(
+    repository: InMemoryRepository[Hero],
+) -> None:
+    """A delete at a stale version raises; at the current version it archives."""
+    hero = (await repository.list())[0]
+    stale = hero.updated_at
+    await repository.update(hero.id, {"name": "A"}, expected_version=None)
+    with pytest.raises(PreconditionFailedError):
+        await repository.delete(hero.id, expected_version=stale)
+    assert await repository.get(hero.id) is not None
+    assert await repository.delete(hero.id, expected_version=hero.updated_at) is True
+    assert await repository.get(hero.id) is None
+
+
+async def test_conditional_write_on_a_missing_or_archived_record_is_not_found(
+    repository: InMemoryRepository[Hero],
+) -> None:
+    """Not-found wins over a version check: a missing or archived record gives None/False."""
+    hero = (await repository.list())[0]
+    now = hero.updated_at
+    assert await repository.update(999, {"name": "A"}, expected_version=now) is None
+    assert await repository.delete(999, expected_version=now) is False
+    await repository.delete(hero.id, expected_version=None)
+    assert await repository.update(hero.id, {"name": "A"}, expected_version=now) is None
+    assert await repository.delete(hero.id, expected_version=now) is False
+
+
+async def test_scope_restricts_single_record_writes(repository: InMemoryRepository[Hero]) -> None:
+    """A record outside `scope` counts as not found for update and delete."""
+    hero = (await repository.list())[0]
+    outside = [FilterClause("name", FilterOp.EQ, "someone else")]
+    inside = [FilterClause("name", FilterOp.EQ, hero.name)]
+    assert (
+        await repository.update(hero.id, {"powers": []}, expected_version=None, scope=outside)
+        is None
+    )
+    assert await repository.delete(hero.id, expected_version=None, scope=outside) is False
+    assert await repository.update(hero.id, {"powers": []}, expected_version=None, scope=inside)
+    assert await repository.delete(hero.id, expected_version=None, scope=inside) is True
+
+
+async def test_soft_delete_moves_the_version_like_the_sql_backend(
+    repository: InMemoryRepository[Hero],
+) -> None:
+    """Archiving (single or bulk) bumps updated_at, so a pre-delete ETag can't match a restore."""
+    first, second = (await repository.list())[:2]
+    before = (first.updated_at, second.updated_at)
+    await repository.delete(first.id, expected_version=None)
+    await repository.delete_many(filters=[FilterClause("id", FilterOp.EQ, second.id)])
+    restored = await repository.restore(first.id)
+    assert restored is not None
+    assert restored.updated_at > before[0]
+    assert second.updated_at > before[1]
