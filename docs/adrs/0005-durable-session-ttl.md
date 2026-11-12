@@ -3,7 +3,8 @@
 ## Status
 
 Accepted. Completes the follow-up that [0004](0004-transient-event-subscribers.md)
-left open.
+left open. Amended by [0010](0010-hardened-mqtt-and-event-streams.md): the default
+`session_ttl` is now 3600 seconds, not `None`.
 
 ## Context
 

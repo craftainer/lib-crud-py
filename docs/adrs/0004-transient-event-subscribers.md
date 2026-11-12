@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted. Amended by [0010](0010-hardened-mqtt-and-event-streams.md): the generated router
+now subscribes transient unless `CrudConfig.sse_durable_sessions` is set.
 
 ## Context
 

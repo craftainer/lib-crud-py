@@ -790,9 +790,10 @@ class _FiniteEventSource:
     """EventSource whose subscription ends immediately -- see _no_events_ever's docstring."""
 
     async def subscribe(
-        self, subscriber_id: str | None
+        self, subscriber_id: str | None, *, durable: bool = True
     ) -> tuple[str, EventIterator[dict[str, Any]]]:
         """Resolve subscriber_id and return it with an iterator that yields nothing."""
+        del durable
         return subscriber_id or "stub-subscriber", _no_events_ever()
 
 

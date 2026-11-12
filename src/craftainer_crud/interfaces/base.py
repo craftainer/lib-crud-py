@@ -26,12 +26,18 @@ import logging
 import ssl
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from pydantic import BaseModel
 
+from craftainer_crud.config import (
+    DEFAULT_SESSION_TTL_SECONDS,
+    build_mqtt_tls_context,
+    validate_mqtt_security,
+)
+from craftainer_crud.interfaces.delivery import deliver_event, drain_event_deliveries
 from craftainer_crud.interfaces.subscriber_ids import resolve_subscriber_id
 from craftainer_crud.repositories.base import Repository
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
@@ -213,24 +219,28 @@ def _event_envelope(
 
 
 def _mqtt_connection_kwargs(
-    *, username: str | None, password: str | None, use_tls: bool
+    *,
+    username: str | None,
+    password: str | None,
+    use_tls: bool,
+    tls_context: ssl.SSLContext | None = None,
+    ca_file: str | None = None,
+    client_cert: str | None = None,
+    client_key: str | None = None,
 ) -> dict[str, Any]:
     """Build the auth/TLS kwargs shared by MQTTEventSink/MQTTEventSource's aiomqtt.Client.
 
-    `username`/`password`/`use_tls` default to None/None/False, matching
-    mosquitto.conf's own no-auth/no-TLS local-dev default (see
-    .devcontainer/stack/mqtt/mosquitto.conf) -- app.config.Settings requires all
-    three to be set in production (see its own
-    `_require_mqtt_auth_in_production`), so this is only ever unauthenticated/
-    plaintext for local dev. `# pragma: no cover` below is for tests/e2e
-    specifically: its one live process always talks to that local, no-TLS
-    broker, so `use_tls` is never True there -- tests/unit/interfaces/
-    test_base.py exercises this branch directly and still counts toward its
-    own 95% gate.
+    Without `use_tls` the connection is plaintext, which is only for a local development
+    broker (see .devcontainer/stack/mqtt/mosquitto.conf); `validate_mqtt_security` has
+    already refused credentials on it unless `allow_insecure`. With it, the context is the
+    caller's own `tls_context`, or one built from `ca_file`/`client_cert`/`client_key`
+    that verifies the broker and refuses TLS below 1.2 (see `build_mqtt_tls_context`).
     """
     kwargs: dict[str, Any] = {"username": username, "password": password}
-    if use_tls:  # pragma: no cover -- see docstring
-        kwargs["tls_context"] = ssl.create_default_context()
+    if use_tls:
+        kwargs["tls_context"] = build_mqtt_tls_context(
+            tls_context=tls_context, ca_file=ca_file, client_cert=client_cert, client_key=client_key
+        )
     return kwargs
 
 
@@ -304,21 +314,123 @@ class _ReleasingEvents:
             logger.debug("event iterator release failed during GC", exc_info=True)
 
 
+_PUBLISH_TIMEOUT_SECONDS = 10.0
+"""Longest one connect-and-publish may take before it counts as a broker failure."""
+
+
+class _SharedPublisher:
+    """One broker connection shared by every `MQTTEventSink` with the same settings.
+
+    The client is opened lazily on the first publish and kept, so a bulk write of a
+    thousand rows does one CONNECT, not a thousand. Publishes are serialised under a lock
+    (they stay in order). A publish that fails on a connection that had been idle is
+    retried once on a fresh one (the broker may have dropped it); any other failure
+    discards the client so the next publish reconnects, and is raised to the caller
+    (`craftainer_crud.interfaces.delivery` logs and counts it). `aiomqtt.Client` binds
+    to the running loop, so a publish from a different loop starts over.
+    """
+
+    def __init__(self, sink: MQTTEventSink) -> None:
+        self._sink = sink
+        self._client: aiomqtt.Client | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._lock = asyncio.Lock()
+
+    async def _connect(self) -> aiomqtt.Client:
+        import aiomqtt  # noqa: PLC0415 -- optional `[mqtt]` extra, only needed here
+
+        sink = self._sink
+        client = aiomqtt.Client(
+            hostname=sink.hostname,
+            port=sink.port,
+            keepalive=sink.keepalive,
+            **_mqtt_connection_kwargs(
+                username=sink.username,
+                password=sink.password,
+                use_tls=sink.use_tls,
+                tls_context=sink.tls_context,
+                ca_file=sink.ca_file,
+                client_cert=sink.client_cert,
+                client_key=sink.client_key,
+            ),
+        )
+        await client.__aenter__()
+        self._client = client
+        return client
+
+    async def _discard(self) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            try:
+                await client.__aexit__(None, None, None)
+            except Exception:
+                logger.debug("MQTT publisher disconnect failed", exc_info=True)
+
+    async def publish(self, topic: str, payload: str) -> None:
+        loop = asyncio.get_running_loop()
+        if self._loop is not loop:
+            # A client (and the lock) from another loop cannot be used or closed here.
+            self._loop, self._client, self._lock = loop, None, asyncio.Lock()
+        async with self._lock, asyncio.timeout(_PUBLISH_TIMEOUT_SECONDS):
+            reused = self._client is not None
+            try:
+                try:
+                    client = self._client or await self._connect()
+                    await client.publish(topic, payload, qos=1)
+                except Exception:
+                    await self._discard()
+                    if not reused:
+                        raise
+                    client = await self._connect()
+                    await client.publish(topic, payload, qos=1)
+            except BaseException:
+                # A failure, timeout or cancellation leaves the client in an unknown
+                # state: never reuse it.
+                await asyncio.shield(self._discard())
+                raise
+
+    async def close(self) -> None:
+        """Disconnect the shared client, if any."""
+        async with self._lock:
+            await self._discard()
+
+
+_publishers: dict[tuple[object, ...], _SharedPublisher] = {}
+
+
+async def close_event_publishers() -> None:
+    """Disconnect every shared MQTT publisher connection (call on application shutdown).
+
+    Waits for the after-commit deliveries already started first, so a committed change is
+    not lost to the shutdown.
+    """
+    await drain_event_deliveries()
+    publishers = list(_publishers.values())
+    _publishers.clear()
+    for publisher in publishers:
+        await publisher.close()
+
+
 @dataclass(frozen=True)
 class MQTTEventSink:
-    """EventSink publishing to a real MQTT broker at QoS 1, one short-lived connection per call.
+    """EventSink publishing to a real MQTT broker at QoS 1 over one shared connection.
 
-    Each `publish()` opens its own `aiomqtt.Client` connection rather than holding one
-    open across requests -- aiomqtt.Client binds to the event loop it's constructed on
-    (`asyncio.get_running_loop()` in its own `__init__`), which rules out building one
-    eagerly at import time the way craftainer_crud.repositories.memory.InMemoryRepository is
-    (see
-    craftainer_crud.interfaces.dependency.build_event_sink_provider). QoS 1 here only
-    guarantees
-    this publish reaches the broker at least once; the "no missed events across a
-    disconnect" guarantee (docs/adrs/0015-mqtt-for-crud-events.md) comes from the
-    broker's own persistent-session queuing on the *subscribe* side (MQTTEventSource
-    below), not from anything this class does.
+    Every sink with the same broker settings shares one `aiomqtt.Client`, opened on the
+    first `publish()` and reused (see `_SharedPublisher`), so a bulk write is one CONNECT
+    rather than one per event. The client is created lazily on the running loop, not at
+    construction, because `aiomqtt.Client` binds to the event loop it is built on (which
+    rules out building one at import time the way
+    craftainer_crud.repositories.memory.InMemoryRepository is, see
+    craftainer_crud.interfaces.dependency.build_event_sink_provider). Call
+    `close_event_publishers()` on shutdown. QoS 1 here only guarantees this publish reaches
+    the broker at least once; the "no missed events across a disconnect" guarantee
+    (docs/adrs/0015-mqtt-for-crud-events.md) comes from the broker's own persistent-session
+    queuing on the *subscribe* side (MQTTEventSource below), not from anything this class
+    does.
+
+    `use_tls` with `tls_context`, or `ca_file`/`client_cert`/`client_key`, selects the
+    TLS context (see `MQTTConfig`); credentials without `use_tls` are refused unless
+    `allow_insecure`. `password` is kept out of `repr`.
     """
 
     hostname: str
@@ -326,8 +438,31 @@ class MQTTEventSink:
     resource: str
     keepalive: int
     username: str | None = None
-    password: str | None = None
+    password: str | None = field(default=None, repr=False)
     use_tls: bool = False
+    tls_context: ssl.SSLContext | None = None
+    ca_file: str | None = None
+    client_cert: str | None = None
+    client_key: str | None = None
+    allow_insecure: bool = False
+
+    def __post_init__(self) -> None:
+        """Refuse an insecure or self-contradicting connection setup."""
+        _validate_sink_or_source_security(self)
+
+    def _pool_key(self) -> tuple[object, ...]:
+        return (
+            self.hostname,
+            self.port,
+            self.keepalive,
+            self.username,
+            self.password,
+            self.use_tls,
+            self.tls_context,
+            self.ca_file,
+            self.client_cert,
+            self.client_key,
+        )
 
     async def publish(
         self,
@@ -346,17 +481,25 @@ class MQTTEventSink:
             snapshot=snapshot,
             owner=owner,
         )
-        import aiomqtt  # noqa: PLC0415 -- optional `[mqtt]` extra, only needed here
+        key = self._pool_key()
+        publisher = _publishers.get(key)
+        if publisher is None:
+            publisher = _publishers[key] = _SharedPublisher(self)
+        await publisher.publish(f"crud-events/{resource}", json.dumps(envelope))
 
-        async with aiomqtt.Client(
-            hostname=self.hostname,
-            port=self.port,
-            keepalive=self.keepalive,
-            **_mqtt_connection_kwargs(
-                username=self.username, password=self.password, use_tls=self.use_tls
-            ),
-        ) as client:
-            await client.publish(f"crud-events/{resource}", json.dumps(envelope), qos=1)
+
+def _validate_sink_or_source_security(connection: MQTTEventSink | MQTTEventSource) -> None:
+    """Apply `validate_mqtt_security` to a sink's or source's own fields."""
+    validate_mqtt_security(
+        username=connection.username,
+        password=connection.password,
+        use_tls=connection.use_tls,
+        allow_insecure=connection.allow_insecure,
+        tls_context=connection.tls_context,
+        ca_file=connection.ca_file,
+        client_cert=connection.client_cert,
+        client_key=connection.client_key,
+    )
 
 
 @dataclass(frozen=True)
@@ -380,12 +523,12 @@ class MQTTEventSource:
     not, so a restarting long-lived consumer leaves nothing behind. This stays on MQTT
     3.1.1 whatever `session_ttl` is.
 
-    `session_ttl` (seconds, default None) bounds an *abandoned* durable session: a durable
+    `session_ttl` (seconds, default 3600) bounds an *abandoned* durable session: a durable
     subscriber then connects over MQTT 5.0 with Clean Start 0 and a Session Expiry Interval
     of `session_ttl` (MQTT 5.0 sections 3.1.2.4 and 3.1.2.11.2), so the broker deletes the
     session, with its queued events, that long after the connection ends. A client that
     returns within the TTL resumes and is replayed exactly as before (QoS 1, same
-    topic); one that returns later gets a fresh session. None keeps the 0.4.0 behaviour
+    topic); one that returns later gets a fresh session. None keeps the previous behaviour
     (MQTT 3.1.1, expiry left to the broker). The publisher (`MQTTEventSink`) stays on
     3.1.1, which the broker bridges to v5 subscribers.
     """
@@ -395,12 +538,18 @@ class MQTTEventSource:
     resource: str
     keepalive: int
     username: str | None = None
-    password: str | None = None
+    password: str | None = field(default=None, repr=False)
     use_tls: bool = False
-    session_ttl: int | None = None
+    session_ttl: int | None = DEFAULT_SESSION_TTL_SECONDS
+    tls_context: ssl.SSLContext | None = None
+    ca_file: str | None = None
+    client_cert: str | None = None
+    client_key: str | None = None
+    allow_insecure: bool = False
 
     def __post_init__(self) -> None:
-        """Refuse a TTL the Session Expiry Interval (a four-byte unsigned int) cannot carry."""
+        """Refuse an insecure setup, or a TTL the Session Expiry Interval cannot carry."""
+        _validate_sink_or_source_security(self)
         ttl: object = self.session_ttl
         if ttl is not None and (
             not isinstance(ttl, int) or isinstance(ttl, bool) or not 1 <= ttl <= _MAX_SESSION_TTL
@@ -471,7 +620,13 @@ class MQTTEventSource:
             keepalive=self.keepalive,
             **session_kwargs,
             **_mqtt_connection_kwargs(
-                username=self.username, password=self.password, use_tls=self.use_tls
+                username=self.username,
+                password=self.password,
+                use_tls=self.use_tls,
+                tls_context=self.tls_context,
+                ca_file=self.ca_file,
+                client_cert=self.client_cert,
+                client_key=self.client_key,
             ),
         )
         await client.__aenter__()
@@ -856,7 +1011,11 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
         )
 
     async def _publish_event(self, *, record_id: int, action: str, snapshot: SchemaT) -> None:
-        """Call the configured EventSink, if any, with a JSON-safe snapshot.
+        """Hand the configured EventSink, if any, a JSON-safe snapshot to publish after commit.
+
+        Delivery is after-commit and best effort (see craftainer_crud.interfaces.delivery):
+        nothing is published for a rolled-back transaction, and a sink failure is logged
+        and counted, not raised.
 
         Called alongside `_record_revision` for create/update/update_many/delete/
         delete_many, and additionally for restore/restore_many -- see EventSink's
@@ -867,7 +1026,9 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
         # `owner` is passed only for a scoped resource, so a custom EventSink written
         # before the parameter existed keeps working for an owner-less one.
         owner_kwargs = {} if self._owner is None else {"owner": self._owner.value}
-        await self._events.publish(
+        await deliver_event(
+            self._events,
+            session=getattr(self._repository, "session", None),
             resource=self._resource or "",
             record_id=record_id,
             action=action,

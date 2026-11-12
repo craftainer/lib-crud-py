@@ -109,6 +109,42 @@ The catalog's `service-desc` link follows the serving app's `openapi_url`
 path is advertised as is. Pass `openapi_url="/spec.json"` to override, or
 `openapi_url=None` to omit it regardless of the app.
 
+## MQTT connection and event delivery
+
+```python
+from craftainer_crud.config import CrudConfig, MQTTConfig
+
+CrudConfig(
+    mqtt=MQTTConfig(
+        host="broker.internal",
+        port=8883,
+        username="crud",
+        password=settings.mqtt_password,
+        use_tls=True,
+        ca_file="/etc/mqtt/ca.pem",  # a private CA; None uses the system trust store
+        client_cert="/etc/mqtt/client.pem",  # optional, for mutual TLS
+        client_key="/etc/mqtt/client.key",
+    )
+)
+```
+
+`tls_context=` takes a ready `ssl.SSLContext` instead of the three files. A built context
+verifies the broker certificate and host name and refuses TLS below 1.2; a supplied one must
+too, unless `allow_insecure=True`. `username`/`password` without `use_tls=True` raise
+`ValueError` at construction, unless `allow_insecure=True` (a local development broker only).
+The port is not changed by `use_tls`: set 8883 yourself. The password and
+`subscriber_secret` are left out of `repr`. `MQTTEventSink`/`MQTTEventSource` take the
+same options and checks.
+
+Events are published **after the request's transaction commits** and **best effort**: held on the
+repository's SQLAlchemy session until its commit, then published in order from a background task
+over one shared broker connection per distinct setting. A rolled-back change is never published;
+a broker failure is logged and counted (`interfaces.delivery.event_delivery_stats()`), never a 500,
+and the event is not retried. Call `await interfaces.base.close_event_publishers()` on shutdown, and
+`await interfaces.delivery.drain_event_deliveries()` in tests that assert on a sink. A client that
+needs a gap-free view refetches when it reconnects. See
+[ADR 0010](docs/adrs/0010-hardened-mqtt-and-event-streams.md).
+
 ## Event stream subscriber ids
 
 `GET <prefix>/events` hands each subscriber a server-minted, HMAC-signed id in its
@@ -123,8 +159,11 @@ the stream starts fresh under a new id.
 `MQTTEventSource.subscribe(subscriber_id, *, durable=True)` connects with a persistent
 session by default (`clean_session=False`): the broker queues QoS 1 events while the
 subscriber is away and replays them when the same id returns. That is what SSE clients
-want, and it is all `GET <prefix>/events` ever does; the router does not expose
-`durable`.
+want, and it is what `GET <prefix>/events` does when the host sets
+`CrudConfig.sse_durable_sessions=True`. By default (`False`) the route subscribes
+transient (`durable=False`) and ignores a `subscriber_id`/`Last-Event-ID` the client sends;
+the router never exposes `durable` to the client itself. See
+[ADR 0010](docs/adrs/0010-hardened-mqtt-and-event-streams.md).
 
 A long-lived in-process consumer that always starts from scratch (a cache invalidator)
 should call `subscribe(None, durable=False)` (a fresh id, never one a durable subscriber uses, since
@@ -142,14 +181,26 @@ to 2h. The setting is a backstop, not a substitute for transient subscribers.
 ### Bounding abandoned durable sessions (`session_ttl`)
 
 `MQTTEventSource(..., session_ttl=3600)` (or `MQTTConfig(session_ttl_seconds=3600)`
-through `CrudConfig`) makes durable subscribers connect over MQTT 5.0 with Clean Start 0
+through `CrudConfig`, the default) makes durable subscribers connect over MQTT 5.0 with Clean Start 0
 and a Session Expiry Interval of that many seconds, so a browser SSE client that never
 returns has its session and queued events dropped by the broker after the TTL. Within the
-TTL a returning id is replayed as before. The value is 1 to 2**32-1 seconds; the default
+TTL a returning id is replayed as before. The value is 1 to 2**32-1 seconds; the default is 3600;
 `None` keeps the 3.1.1 behaviour above. Transient subscribers and the publisher stay on
 3.1.1, and v3 and v5 clients interoperate on the same topic. The broker must speak MQTT
 5.0 and may cap the value (Mosquitto `max_session_expiry_interval`). See
 `docs/adrs/0005-durable-session-ttl.md`.
+
+### Limits on `/events`
+
+Each caller may hold `CrudConfig.sse_max_streams_per_caller` concurrent streams (default
+5; `None` removes the cap); the next one is answered `429`. The count is per process, so
+with several workers the effective cap is the limit times the worker count. The caller is
+the owner scope's value (from `scope_dependency`, otherwise the CRUD's own `OwnerScope`),
+shared across resources. A resource without an `OwnerScope` cannot tell its callers apart,
+so they all share one bucket per resource (five streams in total by default): give it an
+`OwnerScope` (even `read_scoped=False`) for a per-caller budget, or raise the cap. Streams
+are transient unless `sse_durable_sessions=True`, and a durable session expires after
+`session_ttl_seconds` (default 3600) without a returning client.
 
 ### Closing an event iterator
 
