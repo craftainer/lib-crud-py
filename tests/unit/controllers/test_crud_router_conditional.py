@@ -5,8 +5,9 @@ from datetime import UTC, datetime
 
 import pytest
 from pydantic import BaseModel
+from starlette.requests import Request
 
-from craftainer_crud.controllers.crud_router import list_etag, record_etag
+from craftainer_crud.controllers.crud_router import _expected_version, list_etag, record_etag
 from craftainer_crud.interfaces.base import CRUDInterface
 from tests.unit.controllers.test_crud_router import (
     _FakeGadgetRepository,
@@ -21,13 +22,13 @@ FORMATS = pytest.mark.parametrize("base", ["/gadgets", "/gadgets/xml"])
 
 
 @pytest.fixture(autouse=True)
-def _repository() -> Iterator[None]:
+def _repository() -> Iterator[_FakeGadgetRepository]:
     """Wire a fresh repository into the shared gadget app for each test."""
     repo = _FakeGadgetRepository()
     app.dependency_overrides[get_gadget_crud] = lambda: CRUDInterface(
         schema=_Gadget, repository=repo
     )
-    yield
+    yield repo
     del app.dependency_overrides[get_gadget_crud]
 
 
@@ -157,3 +158,110 @@ def test_if_match_is_ignored_for_bulk_actions() -> None:
     removed = client.delete("/gadgets", params={"name": "Widget"}, headers={"If-Match": '"x"'})
     assert removed.status_code == 200
     assert "etag" not in removed.headers
+
+
+@FORMATS
+def test_matched_if_match_passes_the_records_version_to_the_write(
+    base: str, _repository: _FakeGadgetRepository
+) -> None:
+    """A matching If-Match becomes `expected_version` (the record's updated_at) on the write."""
+    first, second = _create("one"), _create("two")
+    etag = client.get("/gadgets", params={"id": first}).headers["etag"]
+    version = _repository._records[first].updated_at
+    body = (
+        {"json": {"tags": ["b"]}}
+        if base == "/gadgets"
+        else {"content": b"<gadget><tags>b</tags></gadget>"}
+    )
+    assert client.patch(base, params={"id": first}, headers={"If-Match": etag}, **body).is_success
+    assert _repository.writes[-1] == ("update", version)
+    etag = client.get("/gadgets", params={"id": second}).headers["etag"]
+    version = _repository._records[second].updated_at
+    assert client.delete(base, params={"id": second}, headers={"If-Match": etag}).is_success
+    assert _repository.writes[-1] == ("delete", version)
+
+
+@FORMATS
+def test_unconditional_requests_pass_no_expected_version(
+    base: str, _repository: _FakeGadgetRepository
+) -> None:
+    """No If-Match, or `If-Match: *`, writes unconditionally (expected_version=None)."""
+    first, second = _create("one"), _create("two")
+    body = (
+        {"json": {"tags": ["b"]}}
+        if base == "/gadgets"
+        else {"content": b"<gadget><tags>b</tags></gadget>"}
+    )
+    assert client.patch(base, params={"id": first}, **body).is_success
+    assert _repository.writes[-1] == ("update", None)
+    assert client.patch(base, params={"id": first}, headers={"If-Match": "*"}, **body).is_success
+    assert _repository.writes[-1] == ("update", None)
+    assert client.delete(base, params={"id": second}, headers={"If-Match": "*"}).is_success
+    assert _repository.writes[-1] == ("delete", None)
+
+
+@FORMATS
+def test_a_writer_slipping_in_after_the_comparison_still_gets_412(
+    base: str, _repository: _FakeGadgetRepository
+) -> None:
+    """The version is re-checked atomically by the write: the same 412 as a stale If-Match."""
+    gadget_id = _create()
+    etag = client.get("/gadgets", params={"id": gadget_id}).headers["etag"]
+    body = (
+        {"json": {"tags": ["b"]}}
+        if base == "/gadgets"
+        else {"content": b"<gadget><tags>b</tags></gadget>"}
+    )
+    _repository.concurrent_write_after_get = True
+    patched = client.patch(base, params={"id": gadget_id}, headers={"If-Match": etag}, **body)
+    _repository.concurrent_write_after_get = False
+    etag = client.get("/gadgets", params={"id": gadget_id}).headers["etag"]
+    _repository.concurrent_write_after_get = True
+    deleted = client.delete(base, params={"id": gadget_id}, headers={"If-Match": etag})
+    assert patched.status_code == deleted.status_code == 412
+    assert (
+        patched.json()["detail"]
+        == deleted.json()["detail"]
+        == ("Gadget was modified since the supplied If-Match")
+    )
+    assert gadget_id in _repository._records
+
+
+class _Plain(BaseModel):
+    id: int
+
+
+class _OneRecordCrud:
+    """Just enough of CRUDLike for `_expected_version`: `get` returns a fixed view."""
+
+    def __init__(self, record: BaseModel) -> None:
+        self._record = record
+
+    async def get(
+        self, record_id: int, *, include_archived: bool = False, include_unpublished: bool = False
+    ) -> BaseModel:
+        return self._record
+
+
+def _request(if_match: str) -> Request:
+    return Request(
+        {"type": "http", "headers": [(b"if-match", if_match.encode())], "query_string": b""}
+    )
+
+
+async def test_expected_version_is_none_for_a_view_without_updated_at() -> None:
+    """Such a view still gets the pre-write comparison, but there is no version to pass on."""
+    record = _Plain(id=1)
+    crud = _OneRecordCrud(record)
+    assert await _expected_version(crud, _request(record_etag(record)), id=1, not_found="x") is None
+
+
+async def test_expected_version_is_normalised_to_naive_utc() -> None:
+    """A view carrying an offset is converted to the naive-UTC value the columns hold."""
+    aware = _Stamped(id=1, updated_at=datetime(2026, 1, 1, 12, 0, tzinfo=UTC))
+    got = await _expected_version(
+        _OneRecordCrud(aware), _request(record_etag(aware)), id=1, not_found="x"
+    )
+    assert got == datetime(2026, 1, 1, 12, 0)
+    assert got is not None
+    assert got.tzinfo is None

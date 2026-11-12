@@ -9,6 +9,7 @@ superseded it, without its own duplicated CRUD wiring.
 """
 
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
@@ -103,14 +104,18 @@ class CompatCRUD[LegacySchemaT: BaseModel, SchemaT: BaseModel, ModelT]:
         created = await self._crud.create(self._from_legacy_create(data))
         return self._to_legacy(created)
 
-    async def update(self, record_id: int, data: BaseModel) -> LegacySchemaT | None:
+    async def update(
+        self, record_id: int, data: BaseModel, *, expected_version: datetime | None
+    ) -> LegacySchemaT | None:
         """Apply a legacy-shaped partial update, returning the result in the legacy shape."""
-        updated = await self._crud.update(record_id, self._from_legacy_update(data))
+        updated = await self._crud.update(
+            record_id, self._from_legacy_update(data), expected_version=expected_version
+        )
         return self._to_legacy(updated) if updated is not None else None
 
-    async def delete(self, record_id: int) -> bool:
+    async def delete(self, record_id: int, *, expected_version: datetime | None) -> bool:
         """Delete the record with the given id; return whether it existed."""
-        return await self._crud.delete(record_id)
+        return await self._crud.delete(record_id, expected_version=expected_version)
 
     async def update_many(
         self, *, filters: Sequence[FilterClause], data: BaseModel

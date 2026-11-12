@@ -25,7 +25,7 @@ import re
 import weakref
 from collections.abc import AsyncGenerator, Awaitable, Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Any
 
@@ -37,6 +37,7 @@ from pydantic import BaseModel, ValidationError
 from craftainer_crud.config import get_config
 from craftainer_crud.controllers import crud_stats
 from craftainer_crud.controllers.crud_actions import (
+    precondition_failed,
     resolve_delete,
     resolve_list_or_get,
     resolve_restore,
@@ -279,25 +280,29 @@ def _register_manifest(
     options.registry.register(registered)
 
 
-async def _enforce_if_match(
+async def _expected_version(
     crud: Any,
     request: Request,
     *,
     id: int | None,  # noqa: A002
     not_found: str,
-) -> None:
-    """Raise `412` when `If-Match` is present and the addressed record's `ETag` isn't listed.
+) -> datetime | None:
+    """Check `If-Match` against the addressed record and return the version to write against.
 
-    Only a single-record (`?id=`) write is conditional: a bulk action has no one
-    representation to compare against, so `If-Match` is ignored there. Strong
-    comparison (RFC 9110 8.8.3.2): a weak tag never matches, `*` matches any existing
-    record. A missing record falls through to the write's own `404`. The check and the
-    write are separate statements, so two writers racing inside that gap can still both
-    pass; this closes the read-modify-write window a client holds open, not that one.
+    Raises `412` when `If-Match` is present and the addressed record's `ETag` isn't listed.
+    Returns the record's `updated_at` for the write to pass as `expected_version`, so the
+    repository re-checks it atomically with the write itself (two writers racing past this
+    comparison are then separated by the database: one gets `412` from the write). None
+    means an unconditional write: no `If-Match`, a bulk action (no `?id=`: there is no one
+    representation to compare, so `If-Match` is ignored), `If-Match: *` (any existing
+    record matches, whatever its version), a missing record (the write's own `404`) or a
+    view without `updated_at`.
+
+    Strong comparison (RFC 9110 8.8.3.2): a weak tag never matches.
     """
     header = request.headers.get("if-match")
     if header is None or id is None:
-        return
+        return None
     # Same visibility as the write itself (crud_actions reads these query params too),
     # so a record the write would 404 on (e.g. archived by a DELETE) also 404s here.
     current = await crud.get(
@@ -306,13 +311,17 @@ async def _enforce_if_match(
         include_unpublished=parse_include_unpublished(request.query_params),
     )
     if current is None:
-        return
-    etag = record_etag(current)
-    if not any(tag in ("*", etag) for tag in _entity_tags(header)):
-        raise HTTPException(
-            status.HTTP_412_PRECONDITION_FAILED,
-            f"{not_found.removesuffix(' not found')} was modified since the supplied If-Match",
-        )
+        return None
+    tags = _entity_tags(header)
+    if "*" in tags:
+        return None
+    if record_etag(current) not in tags:
+        raise precondition_failed(not_found)
+    updated_at = getattr(current, "updated_at", None)
+    if not isinstance(updated_at, datetime):
+        return None
+    # The repository compares against naive-UTC columns; a view may carry an offset.
+    return updated_at.astimezone(UTC).replace(tzinfo=None) if updated_at.tzinfo else updated_at
 
 
 async def _resolve_stats(crud: Any, schema: type[BaseModel], request: Request) -> ResourceStatsView:
@@ -569,7 +578,9 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
     Single-record GETs carry a strong `ETag` (id + `updated_at`), list GETs a weak one
     over the page, both with `Cache-Control: private, no-cache`; a matching
     `If-None-Match` gets a bodiless `304`. PATCH/DELETE with `?id=` honor `If-Match`
-    (`412` problem details on a mismatch) and PATCH returns the new `ETag`. The XML
+    (`412` problem details on a mismatch, including when another writer got in between the
+    comparison and the write: the matched record's `updated_at` is passed to the repository as
+    `expected_version` and re-checked atomically) and PATCH returns the new `ETag`. The XML
     router mirrors all of this; the web router serves no records.
 
     `stats_cache`, when given (with `resource`), serves `/stats` and `/predict` from a
@@ -682,9 +693,15 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
         record: update_schema,  # type: ignore[valid-type]
         id: int | None = None,  # noqa: A002
     ) -> schema | BulkUpdateResult:  # type: ignore[valid-type]
-        await _enforce_if_match(crud, request, id=id, not_found=not_found)
+        expected_version = await _expected_version(crud, request, id=id, not_found=not_found)
         result = await resolve_update(
-            crud, schema, request, id=id, data=record, not_found=not_found
+            crud,
+            schema,
+            request,
+            id=id,
+            data=record,
+            not_found=not_found,
+            expected_version=expected_version,
         )
         if not isinstance(result, BulkUpdateResult):
             response.headers["ETag"] = record_etag(result)
@@ -706,8 +723,10 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
         response: Response,
         id: int | None = None,  # noqa: A002
     ) -> Response:
-        await _enforce_if_match(crud, request, id=id, not_found=not_found)
-        result = await resolve_delete(crud, schema, request, id=id, not_found=not_found)
+        expected_version = await _expected_version(crud, request, id=id, not_found=not_found)
+        result = await resolve_delete(
+            crud, schema, request, id=id, not_found=not_found, expected_version=expected_version
+        )
         if result is None:
             return Response(status_code=status.HTTP_204_NO_CONTENT)
         # Serialise straight from pydantic: skips FastAPI's jsonable_encoder + JSONResponse
@@ -747,7 +766,7 @@ def build_json_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel
             # itself. Without this check, that None would be returned as this route's
             # `-> schema` response, which FastAPI's response validation rejects as a 500
             # instead of the clean 404 a missing/inaccessible record should produce.
-            published = await crud.update(id, _PublishFlip(is_draft=False))
+            published = await crud.update(id, _PublishFlip(is_draft=False), expected_version=None)
             if published is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
             return published  # type: ignore[no-any-return]
@@ -1128,9 +1147,15 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
         id: int | None = None,  # noqa: A002
     ) -> Response:
         record = _parse_xml_body(await request.body(), update_schema)
-        await _enforce_if_match(crud, request, id=id, not_found=not_found)
+        expected_version = await _expected_version(crud, request, id=id, not_found=not_found)
         result = await resolve_update(
-            crud, schema, request, id=id, data=record, not_found=not_found
+            crud,
+            schema,
+            request,
+            id=id,
+            data=record,
+            not_found=not_found,
+            expected_version=expected_version,
         )
         if isinstance(result, BulkUpdateResult):
             body = to_xml(result, "bulk-update-result")
@@ -1150,8 +1175,10 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
         response: Response,
         id: int | None = None,  # noqa: A002
     ) -> Response:
-        await _enforce_if_match(crud, request, id=id, not_found=not_found)
-        result = await resolve_delete(crud, schema, request, id=id, not_found=not_found)
+        expected_version = await _expected_version(crud, request, id=id, not_found=not_found)
+        result = await resolve_delete(
+            crud, schema, request, id=id, not_found=not_found, expected_version=expected_version
+        )
         if result is None:
             built = Response(status_code=status.HTTP_204_NO_CONTENT)
         else:
@@ -1212,7 +1239,7 @@ def build_xml_router[SchemaT: BaseModel, CreateT: BaseModel, UpdateT: BaseModel]
             if record is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
             _validate_publish_ready(record, create_schema)
-            published = await crud.update(id, _PublishFlip(is_draft=False))
+            published = await crud.update(id, _PublishFlip(is_draft=False), expected_version=None)
             if published is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, not_found)
             return _with_dependency_headers(

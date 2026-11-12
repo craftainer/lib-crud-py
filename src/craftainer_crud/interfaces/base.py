@@ -921,12 +921,21 @@ class CRUDLike[SchemaT: BaseModel](Protocol):
         """Create a record from the given input view and return it as a view."""
         ...
 
-    async def update(self, record_id: int, data: BaseModel) -> SchemaT | None:
-        """Apply the given input view's set fields to the record, if it exists."""
+    async def update(
+        self, record_id: int, data: BaseModel, *, expected_version: datetime | None
+    ) -> SchemaT | None:
+        """Apply the given input view's set fields to the record, if it exists.
+
+        `expected_version` is the record's `updated_at` the caller last saw (None: write
+        unconditionally); a record at another version raises PreconditionFailedError.
+        """
         ...
 
-    async def delete(self, record_id: int) -> bool:
-        """Delete the record with the given id; return whether it existed."""
+    async def delete(self, record_id: int, *, expected_version: datetime | None) -> bool:
+        """Delete the record with the given id; return whether it existed.
+
+        `expected_version` as in `update`.
+        """
         ...
 
     async def update_many(
@@ -1171,39 +1180,41 @@ class CRUDInterface[SchemaT: BaseModel, ModelT]:
         )
         return result
 
-    async def update(self, record_id: int, data: BaseModel) -> SchemaT | None:
-        """Apply the given input view's set fields to the record, if it exists."""
-        if self._owner is None:  # pragma: no cover -- see module docstring
-            instance = await self._repository.update(record_id, self._update_values(data))
-            if instance is None:
-                return None
-            result = self._schema.model_validate(instance)
-        else:
-            updated = await self._repository.update_many(
-                filters=self._scoped(_id_filter(record_id)),
-                data=self._update_values(data),
-            )
-            if not updated:
-                return None
-            result = self._schema.model_validate(updated[0])
+    async def update(
+        self, record_id: int, data: BaseModel, *, expected_version: datetime | None
+    ) -> SchemaT | None:
+        """Apply the given input view's set fields to the record, if it exists.
+
+        Always the repository's single-record `update`, restricted to the owner scope when
+        there is one (a record outside it is not found); `expected_version` makes the
+        write conditional -- see craftainer_crud.repositories.base.Repository.update.
+        """
+        instance = await self._repository.update(
+            record_id,
+            self._update_values(data),
+            expected_version=expected_version,
+            scope=self._scoped(()),
+        )
+        if instance is None:
+            return None
+        result = self._schema.model_validate(instance)
         await self._record_revision(record_id=record_id, action="update", snapshot=result)
         await self._publish_event(record_id=record_id, action="update", snapshot=result)
         return result
 
-    async def delete(self, record_id: int) -> bool:
-        """Delete the record with the given id; return whether it existed."""
+    async def delete(self, record_id: int, *, expected_version: datetime | None) -> bool:
+        """Delete the record with the given id; return whether it existed.
+
+        Owner scope and `expected_version` behave as in `update`.
+        """
         snapshot = (
             await self._pre_delete_snapshot(record_id)
             if self._revisions is not None or self._events is not None
             else None
         )
-        if self._owner is None:  # pragma: no cover -- see module docstring
-            deleted = await self._repository.delete(record_id)
-        else:
-            deleted_records = await self._repository.delete_many(
-                filters=self._scoped(_id_filter(record_id))
-            )
-            deleted = bool(deleted_records)
+        deleted = await self._repository.delete(
+            record_id, expected_version=expected_version, scope=self._scoped(())
+        )
         if deleted and snapshot is not None:
             await self._record_revision(record_id=record_id, action="delete", snapshot=snapshot)
             await self._publish_event(record_id=record_id, action="delete", snapshot=snapshot)

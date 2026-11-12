@@ -237,7 +237,9 @@ validation, a list of validation errors (`loc`, `msg`, `type`).
 `If-Match` applies to **single-record (`?id=`) `PATCH` and `DELETE` only**: a
 bulk action has no one representation to compare, so `If-Match` is ignored
 there. It uses strong comparison; `*` matches any existing record; a stale tag
-is `412`.
+is `412`, including when another writer changes the record between the comparison
+and the write (the server checks the version atomically with the write). A missing
+`If-Match` is an unconditional write.
 
 **CORS.** A browser client can read `ETag` (and `X-Stats-Cache`) only if the
 server lists them in `Access-Control-Expose-Headers`, and can send `If-Match`/

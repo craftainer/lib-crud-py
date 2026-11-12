@@ -10,6 +10,7 @@ import ssl
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, cast
 
 import aiomqtt
@@ -28,6 +29,7 @@ from craftainer_crud.interfaces.base import (
     _schedule_disconnect,
     event_visible,
 )
+from craftainer_crud.repositories.base import PreconditionFailedError
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_crud.repositories.stats import ResourceStats, TimeBucket
 
@@ -71,6 +73,9 @@ class _FakeWidgetRepository:
         self._next_id = 1
         self.last_stats_filters: Sequence[FilterClause] = ()
         self.last_delete_many_include_unpublished: bool | None = None
+        # (method, record_id, expected_version, scope) of every update/delete call.
+        self.writes: list[tuple[str, int, datetime | None, Sequence[FilterClause]]] = []
+        self.version_conflict = False
 
     def _matching(self, filters: Sequence[FilterClause]) -> list[_WidgetRecord]:
         def matches(record: _WidgetRecord, clause: FilterClause) -> bool:
@@ -143,18 +148,41 @@ class _FakeWidgetRepository:
         self._next_id += 1
         return record
 
-    async def update(self, record_id: int, data: dict[str, Any]) -> _WidgetRecord | None:
+    async def update(
+        self,
+        record_id: int,
+        data: dict[str, Any],
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause] = (),
+    ) -> _WidgetRecord | None:
         """Update the record with the given id and return it, or None if it doesn't exist."""
+        self.writes.append(("update", record_id, expected_version, scope))
         record = self._records.get(record_id)
-        if record is None:
+        if record is None or record not in self._matching(scope):
             return None
+        if self.version_conflict:
+            raise PreconditionFailedError(f"{record_id} changed")
         for field, value in data.items():
             setattr(record, field, value)
         return record
 
-    async def delete(self, record_id: int) -> bool:
+    async def delete(
+        self,
+        record_id: int,
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause] = (),
+    ) -> bool:
         """Delete the record with the given id; return whether it existed."""
-        return self._records.pop(record_id, None) is not None
+        self.writes.append(("delete", record_id, expected_version, scope))
+        record = self._records.get(record_id)
+        if record is None or record not in self._matching(scope):
+            return False
+        if self.version_conflict:
+            raise PreconditionFailedError(f"{record_id} changed")
+        del self._records[record_id]
+        return True
 
     async def update_many(
         self, *, filters: Sequence[FilterClause], data: dict[str, Any]
@@ -266,21 +294,21 @@ async def test_update_applies_only_set_fields(
 ) -> None:
     """update() persists the new value and returns the updated view."""
     created = await crud.create(_WidgetCreate(label="a"))
-    updated = await crud.update(created.id, _WidgetUpdate(label="b"))
+    updated = await crud.update(created.id, _WidgetUpdate(label="b"), expected_version=None)
     assert updated is not None
     assert updated.label == "b"
 
 
 async def test_update_missing_returns_none(crud: CRUDInterface[_Widget, _WidgetRecord]) -> None:
     """update() returns None for an id that doesn't exist."""
-    assert await crud.update(999, _WidgetUpdate(label="b")) is None
+    assert await crud.update(999, _WidgetUpdate(label="b"), expected_version=None) is None
 
 
 async def test_delete(crud: CRUDInterface[_Widget, _WidgetRecord]) -> None:
     """delete() removes the record and reports it existed; a second delete reports False."""
     created = await crud.create(_WidgetCreate(label="a"))
-    assert await crud.delete(created.id) is True
-    assert await crud.delete(created.id) is False
+    assert await crud.delete(created.id, expected_version=None) is True
+    assert await crud.delete(created.id, expected_version=None) is False
 
 
 async def test_update_many_applies_to_every_match(
@@ -428,7 +456,10 @@ async def test_owner_update_cannot_reach_another_owners_record(
 ) -> None:
     """update() returns None (and makes no change) for another owner's record."""
     alices = await alice_crud.create(_WidgetCreate(label="a"))
-    assert await bob_crud.update(alices.id, _WidgetUpdate(label="hijacked")) is None
+    assert (
+        await bob_crud.update(alices.id, _WidgetUpdate(label="hijacked"), expected_version=None)
+        is None
+    )
     assert (await alice_crud.get(alices.id)).label == "a"  # type: ignore[union-attr]
 
 
@@ -438,7 +469,7 @@ async def test_owner_delete_cannot_reach_another_owners_record(
 ) -> None:
     """delete() reports False (and deletes nothing) for another owner's record."""
     alices = await alice_crud.create(_WidgetCreate(label="a"))
-    assert await bob_crud.delete(alices.id) is False
+    assert await bob_crud.delete(alices.id, expected_version=None) is False
     assert await alice_crud.get(alices.id) == alices
 
 
@@ -536,7 +567,12 @@ async def test_read_scoped_false_still_blocks_update_of_another_owners_record(
 ) -> None:
     """update() still 404s (returns None) for another owner's record, reads aside."""
     alices = await alice_open_reads_crud.create(_WidgetCreate(label="apple"))
-    assert await bob_open_reads_crud.update(alices.id, _WidgetUpdate(label="hijacked")) is None
+    assert (
+        await bob_open_reads_crud.update(
+            alices.id, _WidgetUpdate(label="hijacked"), expected_version=None
+        )
+        is None
+    )
     assert (await alice_open_reads_crud.get(alices.id)).label == "apple"  # type: ignore[union-attr]
 
 
@@ -546,7 +582,7 @@ async def test_read_scoped_false_still_blocks_delete_of_another_owners_record(
 ) -> None:
     """delete() still reports False for another owner's record, reads aside."""
     alices = await alice_open_reads_crud.create(_WidgetCreate(label="apple"))
-    assert await bob_open_reads_crud.delete(alices.id) is False
+    assert await bob_open_reads_crud.delete(alices.id, expected_version=None) is False
     assert await alice_open_reads_crud.get(alices.id) == alices
 
 
@@ -620,7 +656,7 @@ async def test_events_fired_on_update(
     """update() publishes one "update" event with the updated record's snapshot."""
     created = await event_crud.create(_WidgetCreate(label="a"))
     event_sink.calls.clear()
-    updated = await event_crud.update(created.id, _WidgetUpdate(label="b"))
+    updated = await event_crud.update(created.id, _WidgetUpdate(label="b"), expected_version=None)
     assert updated is not None
     assert event_sink.calls == [
         {
@@ -636,7 +672,7 @@ async def test_events_not_fired_on_missing_update(
     event_crud: CRUDInterface[_Widget, _WidgetRecord], event_sink: _FakeEventSink
 ) -> None:
     """update() publishes nothing for an id that doesn't exist."""
-    assert await event_crud.update(999, _WidgetUpdate(label="b")) is None
+    assert await event_crud.update(999, _WidgetUpdate(label="b"), expected_version=None) is None
     assert event_sink.calls == []
 
 
@@ -646,7 +682,7 @@ async def test_events_fired_on_delete(
     """delete() publishes one "delete" event with the pre-delete snapshot."""
     created = await event_crud.create(_WidgetCreate(label="a"))
     event_sink.calls.clear()
-    assert await event_crud.delete(created.id) is True
+    assert await event_crud.delete(created.id, expected_version=None) is True
     assert event_sink.calls == [
         {
             "resource": "widget",
@@ -661,7 +697,7 @@ async def test_events_not_fired_on_missing_delete(
     event_crud: CRUDInterface[_Widget, _WidgetRecord], event_sink: _FakeEventSink
 ) -> None:
     """delete() publishes nothing for an id that doesn't exist."""
-    assert await event_crud.delete(999) is False
+    assert await event_crud.delete(999, expected_version=None) is False
     assert event_sink.calls == []
 
 
@@ -738,9 +774,11 @@ async def test_no_events_published_when_events_not_configured(
 ) -> None:
     """A CRUDInterface built with events=None (the default) never touches any sink."""
     created = await crud.create(_WidgetCreate(label="a"))
-    assert await crud.update(created.id, _WidgetUpdate(label="b")) is not None
+    assert (
+        await crud.update(created.id, _WidgetUpdate(label="b"), expected_version=None) is not None
+    )
     assert await crud.restore(created.id) is not None
-    assert await crud.delete(created.id) is True
+    assert await crud.delete(created.id, expected_version=None) is True
 
 
 # --- InMemoryEventSink: the MODE=mock EventSink/EventSource, tested directly --
@@ -934,7 +972,9 @@ async def test_owner_update_cannot_reassign_the_owner(
 ) -> None:
     """update() and update_many() drop the owner field from the data."""
     created = await alice_crud.create(_WidgetCreate(label="a"))
-    updated = await alice_crud.update(created.id, _WidgetOwnerUpdate(label="b", owner_id="bob"))
+    updated = await alice_crud.update(
+        created.id, _WidgetOwnerUpdate(label="b", owner_id="bob"), expected_version=None
+    )
     assert updated is not None
     assert (updated.label, updated.owner_id) == ("b", "alice")
     many = await alice_crud.update_many(
@@ -983,3 +1023,55 @@ def test_event_envelope_owner_is_json_safe_and_visibility_fails_closed() -> None
     ownerless = CRUDInterface(schema=_Widget, repository=_FakeWidgetRepository())
     assert event_visible(open_reads, envelope)
     assert event_visible(ownerless, envelope)
+
+
+# --- optimistic concurrency: expected_version / scope reach the repository ---------
+
+
+async def test_update_and_delete_forward_expected_version_and_owner_scope(
+    alice_crud: CRUDInterface[_Widget, _WidgetRecord],
+    repository: _FakeWidgetRepository,
+) -> None:
+    """Both writes go to the single-record repository methods, with the version and scope."""
+    created = await alice_crud.create(_WidgetCreate(label="a"))
+    version = datetime(2030, 1, 1)
+    await alice_crud.update(created.id, _WidgetUpdate(label="b"), expected_version=version)
+    await alice_crud.delete(created.id, expected_version=version)
+    owner_scope = (FilterClause("owner_id", FilterOp.EQ, "alice"),)
+    assert repository.writes == [
+        ("update", created.id, version, owner_scope),
+        ("delete", created.id, version, owner_scope),
+    ]
+
+
+async def test_a_precondition_failure_propagates_and_publishes_nothing(
+    repository: _FakeWidgetRepository,
+) -> None:
+    """A version mismatch raises out of update/delete before any revision or event is recorded."""
+    sink = InMemoryEventSink(resource="widget")
+    _, events = await sink.subscribe(None)
+    crud = CRUDInterface(schema=_Widget, repository=repository, events=sink, resource="widget")
+    created = await crud.create(_WidgetCreate(label="a"))
+    await events.__anext__()
+    repository.version_conflict = True
+    with pytest.raises(PreconditionFailedError):
+        await crud.update(
+            created.id, _WidgetUpdate(label="b"), expected_version=datetime(2030, 1, 1)
+        )
+    with pytest.raises(PreconditionFailedError):
+        await crud.delete(created.id, expected_version=datetime(2030, 1, 1))
+    assert repository._records[created.id].label == "a"
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(events.__anext__(), timeout=0.05)
+
+
+async def test_owner_scoped_write_outside_the_scope_is_not_found(
+    alice_crud: CRUDInterface[_Widget, _WidgetRecord],
+    bob_crud: CRUDInterface[_Widget, _WidgetRecord],
+) -> None:
+    """Another owner's record is not found, not a precondition failure."""
+    created = await alice_crud.create(_WidgetCreate(label="a"))
+    assert (
+        await bob_crud.update(created.id, _WidgetUpdate(label="x"), expected_version=None) is None
+    )
+    assert await bob_crud.delete(created.id, expected_version=None) is False

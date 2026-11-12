@@ -41,7 +41,7 @@ async def test_a_committed_write_is_published_after_the_commit() -> None:
         await session.commit()
         await drain_event_deliveries()
         assert [(c["record_id"], c["action"]) for c in sink.calls] == [(created.id, "create")]
-        await crud.delete(created.id)
+        await crud.delete(created.id, expected_version=None)
         await session.commit()
 
 

@@ -31,17 +31,20 @@ delete()/delete_many()'s genuinely-hard-delete path and restore_many()'s
 no-archived_at early return can never run through any test here without a second,
 Archivable-less model existing purely to exercise them.
 
-update()/delete()/restore() (the non-`_many` single-record methods) are also
-`# pragma: no cover`, for the same reason as craftainer_crud.repositories.memory's own
-module docstring's second reason: Hero's own CRUDInterface always sets `owner`
-(see app.crud_1.heroes.heroes_v2.get_hero_crud), which routes every
-single-record update/delete/restore through this repository's own
-update_many/delete_many/restore_many instead (see craftainer_crud.interfaces.base.
-OwnerScope's docstring) -- so those three methods can never run through
-tests/e2e. tests/integration/repositories/test_sqlalchemy.py calls them
-directly, which is what actually covers them for the primary coverage gate;
-the pragma only affects what's counted toward the separate `pytest tests/e2e`
-coverage gate.
+restore() (the non-`_many` single-record method) is also `# pragma: no cover`, for
+the same reason as craftainer_crud.repositories.memory's own module docstring's second
+reason: Hero's own CRUDInterface always sets `owner`, which routes a single-record
+restore through this repository's own restore_many instead. tests/integration/
+repositories/test_sqlalchemy.py calls restore() directly, which is what actually covers
+it for the primary coverage gate. update()/delete() are not special any more: the
+interface calls them for every single-record write, owner-scoped or not (via `scope`),
+and the hard-delete branch is covered by a throwaway mixin-less model.
+
+Optimistic concurrency: update()/delete() take `expected_version` (the record's
+`updated_at`) and run one conditional statement. `updated_at` is set by the server's
+`now()`, which Postgres evaluates once per *transaction*: two writes inside one
+transaction produce the same version, and the version has the column's microsecond
+granularity. See docs/adrs/0011-atomic-optimistic-concurrency.md.
 
 `_lifecycle_stats`'s own `hasattr` checks are `# pragma: no cover` for the same
 reason: Hero (the only model tests/e2e reaches this repository through) always
@@ -57,12 +60,12 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import ColumnElement, Select, func, or_, select, text
+from sqlalchemy import ColumnElement, Select, delete, func, or_, select, text, update
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from craftainer_crud.models.base import IdentifiedBase
-from craftainer_crud.repositories.base import RecordLockedError
+from craftainer_crud.repositories.base import PreconditionFailedError, RecordLockedError
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_crud.repositories.stats import (
     LifecycleStats,
@@ -86,6 +89,11 @@ def _as_float(value: int | float | Decimal | None) -> float | None:
 def _now() -> datetime:
     """Return the current time as naive UTC, matching how naive TIMESTAMP columns store it."""
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _mismatch(record_id: int, expected_version: datetime) -> str:
+    """Return the PreconditionFailedError message for a record not at `expected_version`."""
+    return f"record {record_id!r} is no longer at the expected version {expected_version!r}"
 
 
 def _raise_if_locked(instance: object, data: dict[str, Any] | None) -> None:
@@ -326,35 +334,131 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         await self._session.flush()
         return instance
 
-    async def update(  # pragma: no cover -- see module docstring
-        self, record_id: int, data: dict[str, Any]
-    ) -> ModelT | None:
-        """Apply the given field values to the record with the given id, if it exists."""
-        instance = await self._session.get(self._model, record_id)
-        if instance is None or getattr(instance, "archived_at", None) is not None:
-            return None
-        _raise_if_locked(instance, data)
-        for field, value in data.items():
-            setattr(instance, field, value)
-        await self._session.flush()
-        await self._reload([instance])
-        return instance
+    async def _writable(
+        self,
+        record_id: int,
+        data: dict[str, Any] | None,
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause],
+    ) -> tuple[ModelT | None, Sequence[ColumnElement[bool]]]:
+        """Read the live, in-scope record fresh, and return it with the write's WHERE terms.
 
-    async def delete(self, record_id: int) -> bool:  # pragma: no cover -- see module docstring
-        """Delete the record with the given id; return whether it existed."""
-        instance = await self._session.get(self._model, record_id)
+        The read exists for the early outcomes (not found, version mismatch, locked); the
+        write that follows repeats the version, scope and not-archived predicates in its
+        own WHERE, so a writer that slips in between is caught there, not here. It uses
+        `populate_existing` so a stale identity-map copy is never trusted.
+        """
+        predicates = [
+            self._model.id == record_id,
+            *self._where_clauses(scope),
+            *self._visibility_clauses(include_archived=False, include_unpublished=True),
+        ]
+        statement = select(self._model).where(*predicates).execution_options(populate_existing=True)
+        instance = (await self._session.execute(statement)).scalars().first()
+        if instance is None:
+            return None, predicates
+        if expected_version is not None:
+            if instance.updated_at != expected_version:
+                raise PreconditionFailedError(_mismatch(record_id, expected_version))
+            predicates.append(self._model.updated_at == expected_version)
+        _raise_if_locked(instance, data)
+        return instance, predicates
+
+    async def _lost_race(
+        self,
+        record_id: int,
+        predicates: Sequence[ColumnElement[bool]],
+        *,
+        expected_version: datetime | None,
+    ) -> None:
+        """Explain a conditional write that matched no row.
+
+        The record was there when `_writable` read it, so a version-conditional write that
+        matched nothing means another writer changed it first (PreconditionFailedError); one
+        that wasn't conditional means it was removed meanwhile (the caller reports not found).
+        """
+        if expected_version is None:
+            return
+        # Everything but the version predicate (the last one `_writable` appended).
+        still_there = select(self._model.id).where(*predicates[:-1])
+        if (await self._session.execute(still_there)).first() is not None:
+            raise PreconditionFailedError(_mismatch(record_id, expected_version))
+
+    async def update(
+        self,
+        record_id: int,
+        data: dict[str, Any],
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause] = (),
+    ) -> ModelT | None:
+        """Apply the given field values to the record with the given id, if it exists.
+
+        One `UPDATE ... WHERE id AND scope AND updated_at = :expected RETURNING <row>`:
+        the version check and the write are the same statement, so of two writers holding
+        the same `expected_version` exactly one matches a row. `updated_at` is set
+        explicitly (to the transaction's `now()`), so even an empty `data` bumps the version.
+        """
+        instance, predicates = await self._writable(
+            record_id, data, expected_version=expected_version, scope=scope
+        )
+        if instance is None:
+            return None
+        statement = (
+            update(self._model)
+            .where(*predicates)
+            .values(**data, updated_at=func.now())
+            .returning(self._model)
+            .execution_options(populate_existing=True, synchronize_session=False)
+        )
+        updated = (await self._session.execute(statement)).scalars().first()
+        if updated is None:
+            await self._lost_race(record_id, predicates, expected_version=expected_version)
+            return None
+        return updated
+
+    async def delete(
+        self,
+        record_id: int,
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause] = (),
+    ) -> bool:
+        """Delete the record with the given id; return whether it existed.
+
+        Same single conditional statement as `update`: a soft delete is
+        `UPDATE ... SET archived_at`, a hard delete is `DELETE ... WHERE`.
+        """
+        instance, predicates = await self._writable(
+            record_id, None, expected_version=expected_version, scope=scope
+        )
         if instance is None:
             return False
         if hasattr(instance, "archived_at"):
-            if instance.archived_at is not None:
-                return False
-            _raise_if_locked(instance, None)
-            instance.archived_at = _now()
-            await self._session.flush()
-            return True
-        _raise_if_locked(instance, None)
-        await self._session.delete(instance)
-        await self._session.flush()
+            soft = (
+                update(self._model)
+                .where(*predicates)
+                .values(archived_at=_now(), updated_at=func.now())
+                .returning(self._model.id)
+                .execution_options(synchronize_session=False)
+            )
+            removed = (await self._session.execute(soft)).first()
+            if removed is not None:
+                await self._reload([instance])
+        else:
+            hard = (
+                delete(self._model)
+                .where(*predicates)
+                .returning(self._model.id)
+                .execution_options(synchronize_session=False)
+            )
+            removed = (await self._session.execute(hard)).first()
+            if removed is not None:
+                self._session.expunge(instance)
+        if removed is None:
+            await self._lost_race(record_id, predicates, expected_version=expected_version)
+            return False
         return True
 
     async def update_many(

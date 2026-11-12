@@ -265,11 +265,15 @@ records, so it has none.
 - **If-Match / 412:** on `PATCH`/`DELETE` with `?id=`, a stale tag raises
   `412` (problem details); strong comparison, so a weak tag never matches;
   `*` matches any existing record; a missing record still gets the write's
-  own `404`. A successful `PATCH` returns the new `ETag`.
-- **Race caveat:** the `If-Match` check (`crud.get`) and the write are
-  separate statements, so two writers racing inside that gap can both
-  pass. It closes the read-modify-write window a client holds open, not
-  that one.
+  own `404`; a missing `If-Match` is an unconditional write (no `428`). A
+  successful `PATCH` returns the new `ETag`.
+- **Atomic check:** the router matches the tag against `crud.get`, then passes
+  the matched record's `updated_at` to `crud.update`/`delete` as
+  `expected_version`; the repository re-checks it in the write itself and a
+  writer that slipped in between gets the same `412`
+  (`PreconditionFailedError`, see `../repositories/README.md` and
+  ADR 0011). `*`, no `If-Match`, and a view without `updated_at` pass `None`
+  (unconditional).
 - **Bulk actions** (no `?id=`) are unconditional: `If-Match` is ignored.
 
 ## CRUD manifest routes

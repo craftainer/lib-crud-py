@@ -10,6 +10,8 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any, cast
 
 import pytest
@@ -30,6 +32,7 @@ from craftainer_crud.interfaces.base import (
     InMemoryEventSink,
     OwnerScope,
 )
+from craftainer_crud.repositories.base import PreconditionFailedError
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp, SortClause
 from craftainer_crud.repositories.stats import (
     NumericFieldStats,
@@ -54,6 +57,9 @@ class _GadgetRecord:
     name: str
     tags: list[str]
     bucket: str = "2024-01-01T00:00:00"
+    updated_at: datetime = dataclass_field(
+        default_factory=lambda: datetime.now(UTC).replace(tzinfo=None)
+    )
 
 
 class _Gadget(BaseModel):
@@ -63,6 +69,7 @@ class _Gadget(BaseModel):
     id: int
     name: str
     tags: list[str]
+    updated_at: datetime
 
 
 class _GadgetCreate(BaseModel):
@@ -97,6 +104,9 @@ class _FakeGadgetRepository:
         """Start with no records and the first id to hand out."""
         self._records: dict[int, _GadgetRecord] = {}
         self._next_id = 1
+        # Simulates another writer: bumps a record's version right after `get` returns it.
+        self.concurrent_write_after_get = False
+        self.writes: list[tuple[str, datetime | None]] = []
 
     def _matching(self, filters: Sequence[FilterClause]) -> list[_GadgetRecord]:
         return [r for r in self._records.values() if all(_matches(r, c) for c in filters)]
@@ -105,7 +115,13 @@ class _FakeGadgetRepository:
         self, record_id: int, *, include_archived: bool = False, include_unpublished: bool = False
     ) -> _GadgetRecord | None:
         """Return the record with the given id, or None if it doesn't exist."""
-        return self._records.get(record_id)
+        record = self._records.get(record_id)
+        if record is not None and self.concurrent_write_after_get:
+            seen = _GadgetRecord(id=record.id, name=record.name, tags=record.tags)
+            seen.updated_at = record.updated_at
+            record.updated_at += timedelta(microseconds=1)
+            return seen
+        return record
 
     async def list(
         self,
@@ -152,18 +168,47 @@ class _FakeGadgetRepository:
         self._next_id += 1
         return record
 
-    async def update(self, record_id: int, data: dict[str, Any]) -> _GadgetRecord | None:
-        """Update the record with the given id and return it, or None if it doesn't exist."""
+    def _writable(
+        self, record_id: int, expected_version: datetime | None, scope: Sequence[FilterClause]
+    ) -> _GadgetRecord | None:
         record = self._records.get(record_id)
-        if record is None:
+        if record is None or not all(_matches(record, c) for c in scope):
             return None
-        for field, value in data.items():
-            setattr(record, field, value)
+        if expected_version is not None and record.updated_at != expected_version:
+            raise PreconditionFailedError(f"{record_id} changed")
         return record
 
-    async def delete(self, record_id: int) -> bool:
+    async def update(
+        self,
+        record_id: int,
+        data: dict[str, Any],
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause] = (),
+    ) -> _GadgetRecord | None:
+        """Update the record with the given id and return it, or None if it doesn't exist."""
+        self.writes.append(("update", expected_version))
+        record = self._writable(record_id, expected_version, scope)
+        if record is None:
+            return None
+        for field_name, value in data.items():
+            setattr(record, field_name, value)
+        record.updated_at += timedelta(microseconds=1)
+        return record
+
+    async def delete(
+        self,
+        record_id: int,
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause] = (),
+    ) -> bool:
         """Delete the record with the given id; return whether it existed."""
-        return self._records.pop(record_id, None) is not None
+        self.writes.append(("delete", expected_version))
+        if self._writable(record_id, expected_version, scope) is None:
+            return False
+        del self._records[record_id]
+        return True
 
     async def update_many(
         self, *, filters: Sequence[FilterClause], data: dict[str, Any]

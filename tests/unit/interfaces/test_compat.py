@@ -6,11 +6,14 @@ Pydantic view, wrapped in a small "legacy" view/converter pair, not tied to Hero
 all, to prove the wrapper is genuinely generic.
 """
 
+from datetime import datetime
+
 import pytest
 from pydantic import BaseModel, ConfigDict
 
 from craftainer_crud.interfaces.base import CRUDInterface
 from craftainer_crud.interfaces.compat import CompatCRUD
+from craftainer_crud.repositories.base import PreconditionFailedError
 from craftainer_crud.repositories.filtering import FilterClause, FilterOp
 from tests.unit.interfaces.test_base import (
     _FakeWidgetRepository,
@@ -97,7 +100,9 @@ async def test_update_converts_up_then_back_down(
 ) -> None:
     """update() converts the legacy payload up, persists it, and returns the legacy shape."""
     created = await compat_crud.create(_LegacyWidgetCreate(tag="a"))
-    updated = await compat_crud.update(created.id, _LegacyWidgetUpdate(tag="b"))
+    updated = await compat_crud.update(
+        created.id, _LegacyWidgetUpdate(tag="b"), expected_version=None
+    )
     assert updated is not None
     assert updated.tag == "b"
 
@@ -106,14 +111,16 @@ async def test_update_missing_returns_none(
     compat_crud: CompatCRUD[_LegacyWidget, _Widget, object],
 ) -> None:
     """update() returns None for an id that doesn't exist."""
-    assert await compat_crud.update(999, _LegacyWidgetUpdate(tag="b")) is None
+    assert (
+        await compat_crud.update(999, _LegacyWidgetUpdate(tag="b"), expected_version=None) is None
+    )
 
 
 async def test_delete(compat_crud: CompatCRUD[_LegacyWidget, _Widget, object]) -> None:
     """delete() removes the record and reports it existed; a second delete reports False."""
     created = await compat_crud.create(_LegacyWidgetCreate(tag="a"))
-    assert await compat_crud.delete(created.id) is True
-    assert await compat_crud.delete(created.id) is False
+    assert await compat_crud.delete(created.id, expected_version=None) is True
+    assert await compat_crud.delete(created.id, expected_version=None) is False
 
 
 async def test_count_matches_filters(
@@ -169,3 +176,26 @@ async def test_delete_many_forwards_include_unpublished(flag: bool) -> None:
         filters=[FilterClause("label", FilterOp.ICONTAINS, "a")], include_unpublished=flag
     )
     assert repository.last_delete_many_include_unpublished is flag
+
+
+async def test_expected_version_is_forwarded_to_the_wrapped_crud() -> None:
+    """update()/delete() hand `expected_version` on, and a mismatch propagates."""
+    repository = _FakeWidgetRepository()
+    compat = CompatCRUD(
+        CRUDInterface(schema=_Widget, repository=repository),
+        to_legacy=_to_legacy,
+        from_legacy_create=_from_legacy_create,
+        from_legacy_update=_from_legacy_update,
+    )
+    created = await compat.create(_LegacyWidgetCreate(tag="a"))
+    version = datetime(2030, 1, 1)
+    await compat.update(created.id, _LegacyWidgetUpdate(tag="b"), expected_version=version)
+    await compat.delete(created.id, expected_version=version)
+    assert [(call[0], call[2]) for call in repository.writes] == [
+        ("update", version),
+        ("delete", version),
+    ]
+    await compat.create(_LegacyWidgetCreate(tag="c"))
+    repository.version_conflict = True
+    with pytest.raises(PreconditionFailedError):
+        await compat.delete(2, expected_version=version)

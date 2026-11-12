@@ -6,7 +6,8 @@ to, parameterized by a model type rather than one class per resource.
 - `base.py` — `Repository[ModelT]`, the `Protocol` `craftainer_crud.interfaces.base.
   CRUDInterface` is written against: `get`/`list`/`create`/`update`/
   `delete`/`count`/`update_many`/`delete_many`/`restore`/`restore_many`/
-  `stats`, all storage-agnostic. `list`/`update_many`/`delete_many` take
+  `stats`, all storage-agnostic. Also `PreconditionFailedError`, raised by
+  `update`/`delete` when `expected_version` doesn't match. `list`/`update_many`/`delete_many` take
   `filters`/`sort` sequences from `filtering.py`. Also `RecordLockedError`,
   raised by `update`/`update_many`/`delete`/`delete_many` for a
   `Lockable` (see `../models/README.md`'s `mixins.py`) record whose
@@ -42,6 +43,21 @@ to, parameterized by a model type rather than one class per resource.
   frozen dataclasses `Repository.stats` returns; plain value objects, same
   style as `filtering.py`'s `FilterClause`/`SortClause` — see
   "Statistics" below.
+
+## Optimistic concurrency (`expected_version`)
+
+`update` and `delete` take a required keyword `expected_version: datetime |
+None` (the record's `updated_at`; `None` is the explicit unconditional
+write) and `scope: Sequence[FilterClause] = ()` (extra predicates, e.g. an
+owner filter; a record outside it is not found). A stored version that
+differs raises `PreconditionFailedError`, checked atomically with the write:
+`SQLAlchemyRepository` issues one conditional `UPDATE`/`DELETE` and
+`InMemoryRepository` checks and writes with no `await` between. Limits: the
+version is a timestamp (microsecond granularity; Postgres `now()` is the
+transaction start, so two writes in one transaction share it), and the lock
+check is still a read before the write. The in-memory `updated_at` is forced
+strictly increasing. A custom `Repository` must implement the same contract.
+Migration notes: `../../../docs/adrs/0011-atomic-optimistic-concurrency.md`.
 
 ## Record-lifecycle mixins
 

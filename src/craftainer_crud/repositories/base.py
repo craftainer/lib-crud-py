@@ -1,6 +1,7 @@
 """Generic repository protocol: the storage-agnostic contract the CRUD interfaces use."""
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any, Protocol
 
 from craftainer_crud.repositories.filtering import FilterClause, SortClause
@@ -14,6 +15,15 @@ class RecordLockedError(Exception):
     one explicit escape hatch: an `update`/`update_many` call whose own `data` sets
     `is_locked=False`. craftainer_crud.controllers.crud_actions catches this and raises
     HTTPException(423) -- see craftainer_crud.models.mixins.Lockable.
+    """
+
+
+class PreconditionFailedError(Exception):
+    """Raised by update/delete when the stored version isn't the caller's `expected_version`.
+
+    The version is the record's `updated_at`. craftainer_crud.controllers.crud_actions
+    catches this and raises HTTPException(412), the same response a stale `If-Match`
+    gets -- see docs/adrs/0011-atomic-optimistic-concurrency.md.
     """
 
 
@@ -69,16 +79,40 @@ class Repository[ModelT](Protocol):
         """Create and return a new record from the given field values."""
         ...
 
-    async def update(self, record_id: int, data: dict[str, Any]) -> ModelT | None:
+    async def update(
+        self,
+        record_id: int,
+        data: dict[str, Any],
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause] = (),
+    ) -> ModelT | None:
         """Update the record with the given id and return it, or None if it doesn't exist.
+
+        `expected_version` is required: the record's `updated_at` the caller last saw, or
+        None to opt out and write unconditionally. A value makes the write conditional,
+        checked atomically with the write itself (one `UPDATE ... WHERE id = :id AND
+        updated_at = :expected`, never a read followed by a write): a record whose
+        stored version differs raises PreconditionFailedError and is left untouched.
+        `scope` is extra predicates the record must satisfy (an owner restriction, say):
+        a record outside it counts as not found, so None.
 
         Raises RecordLockedError for a Lockable record whose `is_locked` is True,
         unless `data` itself sets `is_locked=False` -- see RecordLockedError.
         """
         ...
 
-    async def delete(self, record_id: int) -> bool:
+    async def delete(
+        self,
+        record_id: int,
+        *,
+        expected_version: datetime | None,
+        scope: Sequence[FilterClause] = (),
+    ) -> bool:
         """Delete the record with the given id; return whether it existed.
+
+        `expected_version` and `scope` behave as in `update`; a version mismatch raises
+        PreconditionFailedError and deletes nothing.
 
         For a model carrying craftainer_crud.models.mixins.Archivable, this sets `archived_at`
         instead of issuing a real delete. Raises RecordLockedError for a Lockable
