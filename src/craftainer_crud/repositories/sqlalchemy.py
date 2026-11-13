@@ -239,8 +239,21 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
             order.append(column.desc() if clause.descending else column.asc())
         return order
 
-    def _matching(self, filters: Sequence[FilterClause]) -> Select[tuple[ModelT]]:
+    def _matching(self, filters: Sequence[FilterClause]) -> Select[Any]:
+        # `select(Model)` is `Select[tuple[Model]]` on SQLAlchemy 2.0 but `Select[Model]` on
+        # 2.1; `Any` is the one row type both versions accept, and every caller reads it
+        # through `.scalars()`, which yields `ModelT` instances either way.
         return select(self._model).where(*self._where_clauses(filters))
+
+    async def _fetch_all(self, statement: Select[Any]) -> Sequence[ModelT]:
+        """Run a `_matching`-derived statement and return its model instances.
+
+        The annotated local is what fixes the row type to `ModelT`: `statement` is
+        `Select[Any]` (see `_matching`), so `.scalars().all()` is `Sequence[Any]`.
+        """
+        result = await self._session.execute(statement)
+        instances: Sequence[ModelT] = result.scalars().all()
+        return instances
 
     async def _guard_regex_timeout(self, filters: Sequence[FilterClause]) -> None:
         """Cap the current transaction's statement_timeout when `filters` includes a REGEX op.
@@ -303,8 +316,7 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
             .offset(skip)
             .limit(limit)
         )
-        result = await self._session.execute(statement)
-        return result.scalars().all()
+        return await self._fetch_all(statement)
 
     async def count(
         self,
@@ -500,8 +512,7 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         statement = self._matching(filters).where(
             *self._visibility_clauses(include_archived=False, include_unpublished=True)
         )
-        result = await self._session.execute(statement)
-        instances = result.scalars().all()
+        instances = await self._fetch_all(statement)
         for instance in instances:
             _raise_if_locked(instance, data)
         for instance in instances:
@@ -526,8 +537,7 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
                 include_archived=False, include_unpublished=include_unpublished
             )
         )
-        result = await self._session.execute(statement)
-        instances = result.scalars().all()
+        instances = await self._fetch_all(statement)
         for instance in instances:
             _raise_if_locked(instance, None)
         now = _now()
@@ -557,8 +567,7 @@ class SQLAlchemyRepository[ModelT: IdentifiedBase]:
         """Clear `archived_at` on every record matching the filters; return them."""
         if not hasattr(self._model, "archived_at"):
             return []  # pragma: no cover -- see module docstring
-        result = await self._session.execute(self._matching(filters))
-        instances = result.scalars().all()
+        instances = await self._fetch_all(self._matching(filters))
         for instance in instances:
             instance.archived_at = None  # type: ignore[attr-defined]
         await self._session.flush()
