@@ -2,3 +2,5 @@ ignore:
   # The CRUD manifest contract (spec page and JSON Schema) is this package's own.
   - docs/manifest.md
   - schemas/
+  # Re-runs mypy and the tests with SQLAlchemy at its declared minimum.
+  - .github/workflows/sqlalchemy-lower-bound.yml
