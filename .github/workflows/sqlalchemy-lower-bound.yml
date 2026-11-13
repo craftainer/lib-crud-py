@@ -1,0 +1,73 @@
+# Tests the lower end of the supported SQLAlchemy range. checks.yml (template-
+# owned) runs everything against uv.lock, which pins 2.1; pyproject.toml allows
+# >=2.0.54,<2.2, so this instance-owned job re-runs the type check and the unit
+# and integration tests with the minimum, 2.0.54 (listed in
+# .github/template-sync-manifest.local.yml).
+#
+# Runs with uv directly on the runner, like codspeed.yml. The integration tests
+# exercise SQLAlchemyRepository against a real database, so a Postgres service
+# container mirrors the devcontainer's (.devcontainer/compose.instance.yml:
+# same image and throwaway credentials). pyproject.toml's cache/coverage paths
+# point into the devcontainer's home, so they are redirected to the runner's
+# temp dir and coverage is off (the 100% gate is enforced by checks.yml).
+name: SQLAlchemy lower bound
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  sqlalchemy-2-0:
+    # renovate: datasource=github-runners depName=ubuntu
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-24.04' }}
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_USER: crud
+          POSTGRES_PASSWORD: crud
+          POSTGRES_DB: tool_crud_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U crud -d tool_crud_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Read by tests/integration/db.py; without them those tests skip.
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: crud
+      POSTGRES_PASSWORD: crud
+      POSTGRES_DB: tool_crud_test
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: uv sync --locked --all-groups --all-extras
+
+      # Replaces the locked 2.1 with the declared minimum; --no-sync below keeps it.
+      - name: Pin SQLAlchemy to the lower bound
+        run: uv pip install "sqlalchemy[asyncio]==2.0.54"
+
+      - name: Type-check on SQLAlchemy 2.0
+        run: uv run --no-sync mypy --cache-dir "${{ runner.temp }}/mypy-cache" src tests
+
+      - name: Test on SQLAlchemy 2.0
+        run: uv run --no-sync pytest --no-cov -o cache_dir="${{ runner.temp }}/pytest-cache"

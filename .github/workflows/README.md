@@ -41,6 +41,11 @@
   `verify-published` run, and only for an instance that sets
   `PYPI_PUBLISH`, `NPM_PUBLISH` or `CARGO_PUBLISH`. A partial registry
   failure therefore never withholds the release.
+- `sqlalchemy-lower-bound.yml` — instance-owned (not template-synced; listed in
+  `../template-sync-manifest.local.yml`): re-runs `mypy` and the unit and
+  integration tests (against a Postgres service container) with SQLAlchemy
+  pinned to its declared minimum, 2.0.54, since `checks.yml` runs against
+  `uv.lock`, which pins 2.1. On push, pull requests and on demand.
 - `codspeed.yml` — runs `tests/bench` under [CodSpeed](https://codspeed.io/)
   on every pull request and push to `main`; see "Benchmarks" below.
 - `moderate-bug-triage.yml` / `moderate-bug-fix.yml` /
