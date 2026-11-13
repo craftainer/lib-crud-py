@@ -14,9 +14,10 @@ dependencies = [
     "pydantic>=2.13.5,<3",
     # request.form() in the web form routes.
     "python-multipart>=0.0.32,<1",
-    # Capped below 2.1: the repository is type-checked (mypy --strict) against 2.0's
-    # Select/Row typing, which 2.1 changes; widen once it is verified on 2.1.
-    "sqlalchemy[asyncio]>=2.0.54,<2.1",
+    # 2.0 and 2.1 are both supported: select(Model) is Select[tuple[Model]] on 2.0 but
+    # Select[Model] on 2.1, so repositories/sqlalchemy.py types its statements as
+    # Select[Any] and mypy --strict passes on either. uv.lock pins 2.1.
+    "sqlalchemy[asyncio]>=2.0.54,<2.2",
 ]
 
 [project.optional-dependencies]
