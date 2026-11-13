@@ -15,8 +15,8 @@ dependencies = [
     # request.form() in the web form routes.
     "python-multipart>=0.0.32,<1",
     # 2.0 and 2.1 are both supported: select(Model) is Select[tuple[Model]] on 2.0 but
-    # Select[Model] on 2.1, so repositories/sqlalchemy.py types its statements as
-    # Select[Any] and mypy --strict passes on either. uv.lock pins 2.1.
+    # Select[Model] on 2.1, so repositories/sqlalchemy.py types its model-entity
+    # statements (_matching) as Select[Any] and mypy --strict passes on either. uv.lock pins 2.1.
     "sqlalchemy[asyncio]>=2.0.54,<2.2",
 ]
 

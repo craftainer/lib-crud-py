@@ -68,4 +68,5 @@ that needs completeness refetches on reconnect); and a host that builds its own 
 being called after the request, from a background task. The stream cap is per process, so with
 N workers the effective cap is N times the limit. Unscoped resources get a cap of five streams in
 total until they pass an owner scope or raise the limit. Optimistic concurrency and the
-SQLAlchemy 2.1 typing change remain separate items.
+SQLAlchemy 2.1 typing change were separate items; both have since landed (the latter widened
+the constraint to `<2.2`).
