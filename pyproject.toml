@@ -30,7 +30,7 @@ xml = ["defusedxml>=0.7.1,<1"]
 [dependency-groups]
 # Installed by a plain `uv sync` (uv's default group).
 dev = [
-    "ruff==0.17.3",
+    "ruff==0.17.4",
     "mypy==2.4.1",
     "pytest==9.2.0",
     "pytest-cov==7.1.0",
