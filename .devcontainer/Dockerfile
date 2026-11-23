@@ -22,7 +22,7 @@ ARG GH_VERSION=2.103.3
 # package. Left on PATH afterward; harmless, and an instance that adds
 # Python as its own application runtime can reuse it directly.
 # renovate: datasource=github-releases depName=astral-sh/uv
-ARG UV_VERSION=0.13.7
+ARG UV_VERSION=0.13.9
 
 # python3 is infrastructure tooling, not an application runtime this
 # template assumes: prek needs an interpreter to build the venv for any
