@@ -20,7 +20,7 @@ ASSET := dist/$(NAME)-$(RELEASE_VERSION)
 # SYFT_IMAGE/UV_IMAGE manager in .github/renovate.json). It runs as root on
 # dist/ between `build` and the upload, so a retagged image must not be able
 # to rewrite the wheel and sdist.
-SYFT_IMAGE := anchore/syft:v1.52.0@sha256:500e2d872ac019436926e8322b4fc1f39441d94d21f6f4046c6ff29b30e8cb02
+SYFT_IMAGE := anchore/syft:v1.57.2@sha256:e97e20b6e6d1699c60296b66ab337941724f9bd06ac279d893eda89601fc4b2a
 
 # release.yml runs build/sbom/publish-packages on the bare runner, which has docker but
 # no uv; release-check runs in the devcontainer, which has uv. So use the
